@@ -1,0 +1,12 @@
+{
+  "scripts": {
+    "bundle": "node bundle.mjs",
+    "format": "prettier --write mpsc.js oneshot.js broadcast.js watch.js lib/*.js lib/*.css bundle.mjs mpsc.html oneshot.html broadcast.html watch.html slides.md"
+  },
+  "dependencies": {
+    "puppeteer-core": "^25.10.0"
+  },
+  "devDependencies": {
+    "prettier": "^3.9.6"
+  }
+}
