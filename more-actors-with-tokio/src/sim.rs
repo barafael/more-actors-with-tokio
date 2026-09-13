@@ -1,6 +1,6 @@
 //! Pure game state machines shared by the server actors (multiplayer) and the
 //! browser client (single-player). No tokio, no transport — logic only.
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 #[cfg(not(target_arch = "wasm32"))]
 use std::sync::OnceLock;
@@ -8,6 +8,7 @@ use std::sync::OnceLock;
 use std::time::Instant;
 
 use sim_channels::broadcast::{BroadcastCore, BroadcastPoll};
+use sim_channels::watch::{BorrowRelease, ChangePoll, SendOffer as WatchSendOffer, WatchCore};
 use sim_channels::mpsc::{MpscCore, RecvPoll, SendOffer, SendPoll};
 use sim_channels::oneshot::OneshotCore;
 use sim_channels::WaiterId;
@@ -16,6 +17,7 @@ use crate::protocol::{
     BroadcastError, BroadcastEvent, BroadcastSnapshot, BroadcastWire, BufferChar, ButtonEvent,
     ButtonState, ButtonWire, MpscEvent, MpscSnapshot, MpscWire, RxInfo, RxState, SenderInfo,
     Color, WatchEvent, WatchSnapshot, WatchWire, BROADCAST_CAPACITY, MPSC_CAPACITY,
+    WATCH_MAX_RX,
 };
 
 /// Connection id used by the local (single-player) client.
@@ -363,9 +365,13 @@ impl MpscSim {
 }
 /// Late-config watch channel: ONE shared cell of state and a single fixed
 /// sender (the presenter), created with an initial value so receivers are born
-/// with a known `created` phase. Unlike mpsc there is no buffer and no clock:
-/// the value moves atomically at send time, so flights are pure client
-/// cosmetics and this sim needs no driver polling.
+/// with a known `created` phase. Channel truth lives in [`WatchCore`]; this
+/// driver owns the presenter slot, receiver ownership and the protocol
+/// mapping.
+///
+/// The core is created lazily: the game opens in a "no channel yet" phase and
+/// `WatchCore::new` needs the initial value, so `core` stays `None` until the
+/// presenter creates it.
 ///
 /// Teaching beats mirrored from tokio:
 /// - `Receiver::borrow()` returns a read guard; `send` waits on the write
@@ -376,13 +382,19 @@ impl MpscSim {
 /// - sending a value equal to the current one changes nothing (dedup).
 /// - sending with zero receivers fails (`SendError`).
 pub struct WatchSim {
-    created: bool,
-    value: Option<char>,
-    version: u64,
+    core: Option<WatchCore<char>>,
+    /// Protocol receiver id -> core receiver id. Core ids are recycled on
+    /// drop; protocol ids are rendered by the UI and never reused.
+    ids: BTreeMap<u64, u64>,
+    /// Protocol receiver id -> owning connection.
+    owners: BTreeMap<u64, u64>,
+    /// Receivers currently holding a `borrow()` read guard.
+    borrowing: BTreeSet<u64>,
+    /// The one send parked behind outstanding borrows, if any.
     pending_send: Option<char>,
     presenter: Option<u64>,
     next_rx: u64,
-    receivers: Vec<RxInfo>,
+    order: Vec<u64>,
 }
 
 impl Default for WatchSim {
@@ -394,13 +406,14 @@ impl Default for WatchSim {
 impl WatchSim {
     pub fn new() -> Self {
         Self {
-            created: false,
-            value: None,
-            version: 0,
+            core: None,
+            ids: BTreeMap::new(),
+            owners: BTreeMap::new(),
+            borrowing: BTreeSet::new(),
             pending_send: None,
             presenter: None,
             next_rx: 1,
-            receivers: Vec::new(),
+            order: Vec::new(),
         }
     }
 
@@ -413,154 +426,168 @@ impl WatchSim {
     }
 
     pub fn has_channel(&self) -> bool {
-        self.created
+        self.core.is_some()
     }
 
     pub fn owner_of(&self, rx: u64) -> Option<u64> {
-        self.receivers.iter().find(|r| r.id == rx).map(|r| r.owner)
+        self.owners.get(&rx).copied()
     }
 
     pub fn owned_by(&self, conn: u64) -> Vec<u64> {
-        self.receivers
+        self.order
             .iter()
-            .filter(|r| r.owner == conn)
-            .map(|r| r.id)
+            .filter(|rx| self.owners.get(rx) == Some(&conn))
+            .copied()
             .collect()
     }
 
-    fn commit_send(&mut self, ch: char) -> Vec<WatchEvent> {
-        if self.value == Some(ch) {
-            return vec![WatchEvent::SameValue];
-        }
-        self.version += 1;
-        self.value = Some(ch);
-        for rx in &mut self.receivers {
-            if rx.awaiting {
-                rx.awaiting = false;
-                rx.version = self.version;
-            }
-        }
-        vec![WatchEvent::Changed {
-            version: self.version,
-            ch,
-        }]
-    }
-
-    /// A send blocked by borrows resolves once the last read guard drops:
-    /// re-check receiver count (SendError), then commit (or dedup).
-    fn resolve_pending_if_clear(&mut self) -> Vec<WatchEvent> {
-        if self.pending_send.is_none() || self.receivers.iter().any(|r| r.borrowing) {
-            return Vec::new();
-        }
-        let ch = self.pending_send.take().expect("checked pending");
-        if self.receivers.is_empty() {
-            vec![WatchEvent::SendRefused]
-        } else {
-            self.commit_send(ch)
-        }
-    }
-
-    fn push_receiver(&mut self, owner: u64, version: u64) -> Vec<WatchEvent> {
+    /// Register a fresh receiver, mapping its core id to a protocol id.
+    fn register(&mut self, core_id: u64, owner: u64) -> Vec<WatchEvent> {
         let id = self.next_rx;
         self.next_rx += 1;
-        self.receivers.push(RxInfo {
-            id,
-            owner,
-            version,
-            awaiting: false,
-            borrowing: false,
-        });
+        self.ids.insert(id, core_id);
+        self.owners.insert(id, owner);
+        self.order.push(id);
         vec![WatchEvent::ReceiverAdded { id, owner }]
+    }
+
+    fn forget(&mut self, rx: u64) {
+        self.ids.remove(&rx);
+        self.owners.remove(&rx);
+        self.borrowing.remove(&rx);
+        self.order.retain(|id| *id != rx);
     }
 
     pub fn handle(&mut self, wire: &WatchWire, conn: u64) -> Vec<WatchEvent> {
         match wire {
             WatchWire::Create { init } => {
-                if self.created || self.presenter != Some(conn) {
+                if self.core.is_some() || self.presenter != Some(conn) {
                     return Vec::new();
                 }
-                self.created = true;
-                self.value = *init;
-                self.version = 0;
+                // the cell always holds a value; `init` is the game's first
+                let mut core = WatchCore::new(init.unwrap_or(' '));
+                // `WatchCore::new` subscribes receiver 1; the game starts
+                // with none, so drop it straight away
+                core.drop_receiver(1);
+                self.core = Some(core);
                 vec![WatchEvent::Created]
             }
             WatchWire::Send { ch } => {
-                if !self.created || self.presenter != Some(conn) {
+                if self.presenter != Some(conn) {
                     return Vec::new();
                 }
+                let Some(core) = self.core.as_mut() else {
+                    return Vec::new();
+                };
+                // one pending send at a time, so the blocked-send beat stays
+                // legible on stage
                 if self.pending_send.is_some() {
                     return Vec::new();
                 }
-                if self.receivers.is_empty() {
+                if core.receiver_count() == 0 {
                     return vec![WatchEvent::SendRefused];
                 }
-                if self.receivers.iter().any(|r| r.borrowing) {
-                    self.pending_send = Some(*ch);
-                    return vec![WatchEvent::SendBlocked];
+                if *core.value() == *ch {
+                    return vec![WatchEvent::SameValue];
                 }
-                self.commit_send(*ch)
+                match core.send(*ch) {
+                    WatchSendOffer::Sent => vec![WatchEvent::Changed {
+                        version: core.version(),
+                        ch: *ch,
+                    }],
+                    WatchSendOffer::Blocked { .. } => {
+                        self.pending_send = Some(*ch);
+                        vec![WatchEvent::SendBlocked]
+                    }
+                    WatchSendOffer::Rejected(_) => vec![WatchEvent::SendRefused],
+                }
             }
             WatchWire::NewReceiver => {
-                if !self.created {
+                let Some(core) = self.core.as_mut() else {
+                    return Vec::new();
+                };
+                if self.order.len() >= WATCH_MAX_RX {
                     return Vec::new();
                 }
-                self.push_receiver(conn, self.version)
+                let core_id = core.subscribe();
+                self.register(core_id, conn)
             }
             // cloning copies the source's seen-version but starts fresh; the
             // driver/actor authorizes the request (owner or presenter)
             WatchWire::CloneReceiver { rx } => {
-                if !self.created {
-                    return Vec::new();
-                }
-                let Some(src) = self.receivers.iter().find(|r| r.id == *rx) else {
+                let Some(&source) = self.ids.get(rx) else {
                     return Vec::new();
                 };
-                self.push_receiver(conn, src.version)
+                if self.order.len() >= WATCH_MAX_RX {
+                    return Vec::new();
+                }
+                let Some(core) = self.core.as_mut() else {
+                    return Vec::new();
+                };
+                let Some(core_id) = core.clone_receiver(source) else {
+                    return Vec::new();
+                };
+                self.register(core_id, conn)
             }
             WatchWire::AwaitChange { rx } => {
-                let Some(r) = self.receivers.iter_mut().find(|r| r.id == *rx) else {
+                if self.owners.get(rx) != Some(&conn) {
+                    return Vec::new();
+                }
+                let Some(&core_id) = self.ids.get(rx) else {
                     return Vec::new();
                 };
-                if r.owner != conn {
+                let Some(core) = self.core.as_mut() else {
+                    return Vec::new();
+                };
+                if core.is_awaiting(core_id) {
+                    // cancel an outstanding changed()
+                    core.cancel_changed(core_id);
                     return Vec::new();
                 }
-                if r.awaiting {
-                    // cancel an outstanding changed()
-                    r.awaiting = false;
-                } else if r.version < self.version {
-                    // already stale: changed() completes immediately
-                    r.version = self.version;
-                } else {
-                    r.awaiting = true;
+                match core.poll_changed(core_id) {
+                    // already stale: changed() completes at once. Announce
+                    // it, or the beat is invisible between two snapshots.
+                    ChangePoll::Immediate => {
+                        vec![WatchEvent::ChangedImmediately { rx: *rx }]
+                    }
+                    ChangePoll::Blocked { .. } | ChangePoll::Closed => Vec::new(),
                 }
-                Vec::new()
             }
             WatchWire::LookInside { rx } => {
-                let Some(r) = self.receivers.iter_mut().find(|r| r.id == *rx) else {
+                if self.owners.get(rx) != Some(&conn) {
+                    return Vec::new();
+                }
+                if !self.ids.contains_key(rx) {
+                    return Vec::new();
+                }
+                let Some(core) = self.core.as_mut() else {
                     return Vec::new();
                 };
-                if r.owner != conn {
-                    return Vec::new();
+                if self.borrowing.remove(rx) {
+                    let release = core.end_borrow();
+                    return self.settle_release(release);
                 }
-                if r.borrowing {
-                    r.borrowing = false;
-                    return self.resolve_pending_if_clear();
-                }
-                r.borrowing = true;
+                self.borrowing.insert(*rx);
+                core.begin_borrow();
                 vec![WatchEvent::BorrowFlight { rx: *rx }]
             }
             WatchWire::DropReceiver { rx } => {
-                let Some(r) = self.receivers.iter().find(|r| r.id == *rx) else {
-                    return Vec::new();
-                };
-                if r.owner != conn {
+                if self.owners.get(rx) != Some(&conn) {
                     return Vec::new();
                 }
-                let was_borrowing = r.borrowing;
-                self.receivers.retain(|x| x.id != *rx);
+                let Some(&core_id) = self.ids.get(rx) else {
+                    return Vec::new();
+                };
+                let was_borrowing = self.borrowing.contains(rx);
                 let mut events = vec![WatchEvent::ReceiverRemoved { id: *rx }];
+                self.forget(*rx);
+                let Some(core) = self.core.as_mut() else {
+                    return events;
+                };
+                core.drop_receiver(core_id);
                 if was_borrowing {
-                    events.extend(self.resolve_pending_if_clear());
+                    let release = core.end_borrow();
+                    events.extend(self.settle_release(release));
                 }
                 events
             }
@@ -569,14 +596,48 @@ impl WatchSim {
         }
     }
 
+    /// A parked send resolves once the last read guard drops.
+    fn settle_release(&mut self, release: BorrowRelease) -> Vec<WatchEvent> {
+        match release {
+            BorrowRelease::Released => Vec::new(),
+            BorrowRelease::Resolved => {
+                let ch = self.pending_send.take();
+                let version = self.core.as_ref().map_or(0, WatchCore::version);
+                match ch {
+                    Some(ch) => vec![WatchEvent::Changed { version, ch }],
+                    None => Vec::new(),
+                }
+            }
+            BorrowRelease::Refused => {
+                self.pending_send = None;
+                vec![WatchEvent::SendRefused]
+            }
+        }
+    }
+
     pub fn snapshot(&self) -> WatchSnapshot {
+        let receivers = self
+            .order
+            .iter()
+            .filter_map(|id| {
+                let core_id = *self.ids.get(id)?;
+                let core = self.core.as_ref()?;
+                Some(RxInfo {
+                    id: *id,
+                    owner: self.owners.get(id).copied().unwrap_or_default(),
+                    version: core.receiver_version(core_id).unwrap_or_default(),
+                    awaiting: core.is_awaiting(core_id),
+                    borrowing: self.borrowing.contains(id),
+                })
+            })
+            .collect();
         WatchSnapshot {
-            created: self.created,
-            value: self.value,
-            version: self.version,
+            created: self.core.is_some(),
+            value: self.core.as_ref().map(|core| *core.value()),
+            version: self.core.as_ref().map_or(0, WatchCore::version),
             pending_send: self.pending_send,
             presenter: self.presenter,
-            receivers: self.receivers.clone(),
+            receivers,
         }
     }
 }
@@ -1270,13 +1331,16 @@ mod watch_tests {
         create(&mut sim);
         let r = rx(&mut sim, 2);
         sim.handle(&WatchWire::Send { ch: 'd' }, 1);
-        sim.handle(&WatchWire::AwaitChange { rx: r }, 2);
+        let events = sim.handle(&WatchWire::AwaitChange { rx: r }, 2);
         let snap = sim.snapshot();
         assert!(
             !snap.receivers[0].awaiting,
             "stale changed() resolves at once"
         );
         assert_eq!(snap.receivers[0].version, snap.version);
+        // the completion is announced, not left for the client to infer from
+        // two snapshots that differ only in a version it never reads
+        assert_eq!(events, vec![WatchEvent::ChangedImmediately { rx: r }]);
     }
 
     #[test]
@@ -1436,6 +1500,23 @@ mod watch_tests {
         assert!(sim
             .handle(&WatchWire::CloneReceiver { rx: 999 }, 1)
             .is_empty());
+    }
+
+    /// The receiver cap used to be a client-side button gate only; a
+    /// crafted client could subscribe without limit.
+    #[test]
+    fn receiver_cap_is_enforced_by_the_sim() {
+        let mut sim = sim();
+        create(&mut sim);
+        for _ in 0..WATCH_MAX_RX {
+            assert!(!sim.handle(&WatchWire::NewReceiver, 2).is_empty());
+        }
+        assert_eq!(sim.snapshot().receivers.len(), WATCH_MAX_RX);
+        assert!(
+            sim.handle(&WatchWire::NewReceiver, 2).is_empty(),
+            "the cap holds regardless of what the client allows"
+        );
+        assert_eq!(sim.snapshot().receivers.len(), WATCH_MAX_RX);
     }
 
     #[test]

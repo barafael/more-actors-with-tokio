@@ -653,6 +653,7 @@ mod handle_tests {
     fn recv_reports_lag_after_overflow() {
         let (tx, mut rx) = channel::<char>(1);
         let mut reader_rx = rx.clone();
+        let reader_slot = reader_rx.id;
         let (got_tx, got_rx) = std::sync::mpsc::channel();
         let reader = thread::spawn(move || {
             let first = reader_rx.recv();
@@ -661,9 +662,15 @@ mod handle_tests {
             (first, second)
         });
         tx.send('a').expect("receiver alive");
-        // wait until the reader consumed 'a', so the overflow below is
-        // deterministic
+        // Wait until the reader consumed 'a' and is parked again before
+        // overflowing the ring. Observing the cursor is what makes this
+        // deterministic: the reader reporting progress only proves it left
+        // the first recv, not that it entered the second, and the two sends
+        // below would otherwise race it into a lag of 2.
         got_rx.recv().expect("reader progress");
+        while tx.shared.lock.lock().receiver_seq(reader_slot) != Some(1) {
+            thread::yield_now();
+        }
         tx.send('b').expect("receiver alive");
         tx.send('c').expect("receiver alive");
         let (first, second) = reader.join().expect("reader thread");

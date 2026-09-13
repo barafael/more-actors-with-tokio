@@ -75,6 +75,12 @@ impl WatchState {
                 let value = self.snap.read().value;
                 self.push_flight(FlightKind::Borrow, id, value);
             }
+            // a stale changed() completes at once: the value reaches that
+            // one receiver without any send happening
+            WatchEvent::ChangedImmediately { rx } => {
+                let value = self.snap.read().value;
+                self.push_flight(FlightKind::Value, rx, value);
+            }
             WatchEvent::BorrowFlight { rx } => {
                 let value = self.snap.read().value;
                 self.push_flight(FlightKind::Borrow, rx, value);

@@ -250,6 +250,11 @@ pub enum WatchEvent {
         version: u64,
         ch: char,
     },
+    /// A `changed()` that was already stale completed at once, without
+    /// waiting for a send. Purely a cue: the state is in the snapshot.
+    ChangedImmediately {
+        rx: u64,
+    },
     SameValue,
     SendRefused,
     SendBlocked,
