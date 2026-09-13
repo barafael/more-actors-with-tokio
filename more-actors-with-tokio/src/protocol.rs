@@ -10,8 +10,8 @@ pub const BROADCAST_CAPACITY: usize = 5;
 /// Per-owner cap on live receivers for the watch game.
 pub const WATCH_MAX_RX: usize = 6;
 
-/// Server-side flight duration; the client does not animate flights yet.
-#[allow(dead_code)]
+/// How long a value spends in flight, in milliseconds: the server actor
+/// schedules landings with it and the client animates over the same span.
 pub const MPSC_FLIGHT_MS: u64 = 700;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -128,7 +128,7 @@ pub struct BufferChar {
 pub struct MpscSnapshot {
     pub senders: Vec<SenderInfo>,
     pub buffer: Vec<BufferChar>,
-    /// Sends queued waiting for capacity (order here is not wake order).
+    /// Sends queued waiting for capacity, in FIFO wake order.
     pub blocked_sends: Vec<BufferChar>,
     pub in_flight: usize,
     pub waiting_receive: bool,
@@ -316,7 +316,8 @@ pub enum BroadcastWire {
     /// by the sender of this wire. Allocation is driver/actor-side.
     CloneSender { source: u64 },
     /// Subscribe a receiver owned by the sender of this wire (one per
-    /// connection; it starts at the oldest buffered value).
+    /// connection; like tokio's `subscribe` it starts at the tail, so it
+    /// only sees values sent after it subscribed).
     Subscribe,
     /// Drop the receiver `receiver` (must be owned by the connection).
     Unsubscribe { receiver: u64 },

@@ -196,12 +196,10 @@ pub fn BroadcastGame() -> Element {
     });
 
     let occupancy = use_memo(move || chan.snap.read().buffer.len());
-    let debug_senders = chan.snap.read().senders.len();
 
     rsx! {
         div { class: "diagram",
             div { class: "game-header", "broadcast" }
-            div { class: "debug-senders", "DBG senders={debug_senders}" }
             div { class: "status", "{conn.status}" }
 
             if closed() {
@@ -224,7 +222,7 @@ pub fn BroadcastGame() -> Element {
                         button {
                             class: "btn small",
                             disabled: !conn.connected() || my_receiver().is_some(),
-                            title: "subscribe a receiver via this sender (one per client)",
+                            title: "subscribe a receiver via this sender — it starts at the tail, so it only sees values sent from now on (one per client)",
                             onclick: move |_| {
                                 let wire = BroadcastWire::Subscribe;
                                 if conn.is_local() {
@@ -339,6 +337,14 @@ pub fn BroadcastGame() -> Element {
     }
 }
 
+/// Sequence number of the oldest retained value. `tail` counts every value
+/// ever sent, so the ring holds seqs `oldest..tail`. Saturating: a snapshot
+/// can never have more buffered values than were sent, but the arithmetic
+/// must not underflow if one ever does.
+fn oldest_seq(tail: u64, buffered: usize) -> u64 {
+    tail.saturating_sub(buffered as u64)
+}
+
 #[component]
 fn BufferRow(buffer: Vec<crate::protocol::BufferChar>, tail: u64) -> Element {
     rsx! {
@@ -347,7 +353,7 @@ fn BufferRow(buffer: Vec<crate::protocol::BufferChar>, tail: u64) -> Element {
             { match buffer.get(i) {
                 Some(owned) => rsx! {
                     div {
-                        key: "{tail - buffer.len() as u64 + i as u64}",
+                        key: "{oldest_seq(tail, buffer.len()) + i as u64}",
                         class: "actor buf-slot filled",
                         style: "left: {layout::slot_left(i)}%; width: {layout::BUFFER_SLOT_W}%; --c: {palette::sender_hex(owned.conn)};",
                         "{owned.ch}"
@@ -476,7 +482,7 @@ fn FlightLayer(
 /// points at; red when it has fallen behind the oldest value.
 #[component]
 fn LinkLayer(senders: Vec<crate::protocol::SenderInfo>, snapshot: BroadcastSnapshot) -> Element {
-    let oldest = snapshot.tail + 1 - snapshot.buffer.len() as u64;
+    let oldest = oldest_seq(snapshot.tail, snapshot.buffer.len());
     let lines = snapshot
         .receivers
         .iter()
@@ -487,8 +493,13 @@ fn LinkLayer(senders: Vec<crate::protocol::SenderInfo>, snapshot: BroadcastSnaps
             if snapshot.buffer.is_empty() {
                 return (y, x, layout::BUFFER_LEFT, layout::BUFFER_CY, false);
             }
-            let behind = rx.next < oldest;
-            let slot = (rx.next.saturating_sub(oldest) as usize)
+            // `next` is 1-based (the seq this receiver will read next), the
+            // ring is indexed from `oldest`. A receiver that subscribed at
+            // the tail points one past the newest value and has nothing to
+            // read yet, so its line rests on the newest slot.
+            let cursor = rx.next.saturating_sub(1);
+            let behind = cursor < oldest;
+            let slot = (cursor.saturating_sub(oldest) as usize)
                 .min(snapshot.buffer.len().saturating_sub(1));
             (
                 y,

@@ -1,12 +1,13 @@
 //! Pure game state machines shared by the server actors (multiplayer) and the
 //! browser client (single-player). No tokio, no transport — logic only.
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 
 #[cfg(not(target_arch = "wasm32"))]
 use std::sync::OnceLock;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
 
+use sim_channels::broadcast::{BroadcastCore, BroadcastPoll};
 use sim_channels::mpsc::{MpscCore, RecvPoll, SendOffer, SendPoll};
 use sim_channels::oneshot::OneshotCore;
 use sim_channels::WaiterId;
@@ -582,25 +583,29 @@ impl WatchSim {
 
 /// Broadcast channel: one ring buffer, many `Sender<T>` handles (the host
 /// seeds one; anyone may clone any of them), one `Receiver<T>` per
-/// subscribing connection.
+/// subscribing connection. Channel truth lives in [`BroadcastCore`]; this
+/// driver owns the handle registries and the protocol mapping.
 ///
 /// - `send` never blocks: when the buffer is full the oldest value is
 ///   evicted to make room.
-/// - every value is numbered (1..=tail). A receiver holds `next`, the seq it
-///   will receive next. `recv()` on a receiver whose `next` points below the
-///   oldest buffered value yields `Lagged(n)` — the count of evicted values
-///   it missed — and resets `next` to the now-oldest value.
+/// - `subscribe()` starts at the tail, like tokio's: a new receiver sees
+///   only values sent after it subscribed, never buffered history.
+/// - a receiver that falls behind the ring yields `Lagged(n)` once — the
+///   count of evicted values it missed — and resumes at the oldest retained
+///   value.
 /// - `recv()` with nothing new arms the receiver (`waiting`); it completes on
-///   the next send. A woken receiver always finds its value (it was armed at
-///   the tail), so it never wakes lagged.
-/// - `recv()` on a closed channel (no senders left) yields `Closed`.
+///   the next send.
+/// - once every sender is gone the channel is closed, but values still
+///   retained stay receivable: `Closed` is only reported after they drain.
 /// - the host seed sender (`conn == 0`) is presenter-owned once a presenter
 ///   claims the slot; ownership transfers to them.
 pub struct BroadcastSim {
+    core: BroadcastCore<BufferChar>,
     senders: Vec<SenderInfo>,
-    buffer: VecDeque<BufferChar>,
-    /// Number of values ever accepted; a value's seq is its position.
-    tail: u64,
+    /// Protocol receiver id -> core slot id. Core slots are recycled on drop,
+    /// so protocol ids (which the UI renders and keys DOM nodes by) are
+    /// allocated separately and never reused.
+    slots: BTreeMap<u64, usize>,
     receivers: Vec<RxState>,
     next_receiver: u64,
     next_sender: u64,
@@ -611,13 +616,6 @@ pub struct BroadcastSim {
 /// claims the presenter slot.
 pub const BROADCAST_HOST_CONN: u64 = 0;
 
-/// The result of one `recv()` step, decided immutably then applied.
-enum RecvOutcome {
-    Closed,
-    Lagged(u64),
-    Value(BufferChar),
-}
-
 impl Default for BroadcastSim {
     fn default() -> Self {
         Self::new()
@@ -627,13 +625,13 @@ impl Default for BroadcastSim {
 impl BroadcastSim {
     pub fn new() -> Self {
         Self {
+            core: BroadcastCore::new(BROADCAST_CAPACITY),
             senders: vec![SenderInfo {
                 conn: BROADCAST_HOST_CONN,
                 owner: BROADCAST_HOST_CONN,
                 blocked: false,
             }],
-            buffer: VecDeque::new(),
-            tail: 0,
+            slots: BTreeMap::new(),
             receivers: Vec::new(),
             next_receiver: 1,
             next_sender: 1,
@@ -643,12 +641,6 @@ impl BroadcastSim {
 
     pub fn presenter(&self) -> Option<u64> {
         self.presenter
-    }
-
-    /// Seq of the oldest buffered value (tail + 1 when empty — a new
-    /// subscriber sees only values sent after it).
-    fn oldest(&self) -> u64 {
-        self.tail + 1 - self.buffer.len() as u64
     }
 
     fn contains_sender(&self, conn: u64) -> bool {
@@ -694,15 +686,16 @@ impl BroadcastSim {
             owner: requester,
             blocked: false,
         });
+        self.core.add_sender();
         vec![BroadcastEvent::SenderJoined {
             conn,
             owner: requester,
         }]
     }
 
-    /// A new receiver starts at the oldest buffered value (tokio's
-    /// `subscribe`): it will see everything still buffered and everything
-    /// sent after. One receiver per connection.
+    /// A new receiver starts at the tail (tokio's `subscribe`): it sees every
+    /// value sent from now on, and none of the history still in the buffer.
+    /// One receiver per connection.
     fn subscribe(&mut self, conn: u64) -> Vec<BroadcastEvent> {
         if self
             .receivers
@@ -713,11 +706,13 @@ impl BroadcastSim {
         }
         let receiver = self.next_receiver;
         self.next_receiver += 1;
+        let slot = self.core.subscribe();
+        self.slots.insert(receiver, slot);
         self.receivers.push(RxState {
             receiver,
             conn,
             owner: conn,
-            next: self.oldest(),
+            next: self.core.next_seq() + 1,
             lagged_total: 0,
             last: None,
             error: None,
@@ -736,8 +731,17 @@ impl BroadcastSim {
         if rx.owner != conn {
             return Vec::new();
         }
-        self.receivers.retain(|r| r.receiver != receiver);
+        self.drop_receiver(receiver);
         vec![BroadcastEvent::ReceiverRemoved { receiver }]
+    }
+
+    /// Release a receiver's core slot and forget its protocol id. The slot
+    /// may be handed to a future subscriber, so the mapping must go too.
+    fn drop_receiver(&mut self, receiver: u64) {
+        if let Some(slot) = self.slots.remove(&receiver) {
+            self.core.drop_receiver(slot);
+        }
+        self.receivers.retain(|r| r.receiver != receiver);
     }
 
     /// A value is appended at the tail; a full buffer evicts its oldest
@@ -746,16 +750,19 @@ impl BroadcastSim {
         if !self.contains_sender(conn) {
             return Vec::new();
         }
-        let seq = self.tail + 1;
-        self.buffer.push_back(BufferChar { ch, conn });
-        self.tail = seq;
-        let mut events = Vec::new();
-        events.push(BroadcastEvent::InFlight { conn, ch });
-        if self.buffer.len() > BROADCAST_CAPACITY {
-            let evicted = self.buffer.pop_front().expect("checked non-empty");
-            events.push(BroadcastEvent::Evicted { ch: evicted.ch });
+        // remember the value at risk of eviction before the send lands
+        let oldest_before = self.core.ring().next().map(|(seq, value)| (seq, *value));
+        if self.core.send(BufferChar { ch, conn }).is_err() {
+            return Vec::new();
         }
-        // woken waiting receivers (each validates against its own owner)
+        let mut events = vec![BroadcastEvent::InFlight { conn, ch }];
+        // the ring's front moved on: the value it held was evicted
+        let oldest_now = self.core.ring().next().map(|(seq, _)| seq);
+        if let (Some((before, evicted)), Some(now)) = (oldest_before, oldest_now) {
+            if now > before {
+                events.push(BroadcastEvent::Evicted { ch: evicted.ch });
+            }
+        }
         let armed: Vec<(u64, u64)> = self
             .receivers
             .iter()
@@ -768,50 +775,30 @@ impl BroadcastSim {
         events
     }
 
-    /// One `recv()` step for a receiver: Lagged / value / arm-as-waiting.
+    /// One `recv()` step for a receiver: a value, a lag report, closure, or
+    /// arming it to complete on the next send.
     fn recv(&mut self, receiver: u64, conn: u64) -> Vec<BroadcastEvent> {
-        // decision phase (immutable)
         let Some(rx) = self.receivers.iter().find(|r| r.receiver == receiver) else {
             return Vec::new();
         };
         if rx.owner != conn {
             return Vec::new();
         }
-        let outcome = if self.senders.is_empty() {
-            Some(RecvOutcome::Closed)
-        } else {
-            let oldest = self.oldest();
-            if rx.next < oldest {
-                Some(RecvOutcome::Lagged(oldest - rx.next))
-            } else if rx.next <= self.tail {
-                let owned = self.buffer[(rx.next - oldest) as usize];
-                Some(RecvOutcome::Value(owned))
-            } else {
-                None
-            }
+        let Some(slot) = self.slots.get(&receiver).copied() else {
+            return Vec::new();
         };
-        // apply phase
-        let oldest = self.oldest();
+        let poll = self.core.poll_recv(slot);
+        let cursor = self.core.receiver_seq(slot);
         let rx = self
             .receivers
             .iter_mut()
             .find(|r| r.receiver == receiver)
             .expect("checked above");
-        match outcome {
-            Some(RecvOutcome::Closed) => {
-                rx.error = Some(BroadcastError::Closed);
-                rx.waiting = false;
-                Vec::new()
-            }
-            Some(RecvOutcome::Lagged(n)) => {
-                rx.next = oldest;
-                rx.lagged_total += n;
-                rx.waiting = false;
-                rx.error = Some(BroadcastError::Lagged(n));
-                vec![BroadcastEvent::Lagged { receiver, n }]
-            }
-            Some(RecvOutcome::Value(owned)) => {
-                rx.next += 1;
+        if let Some(cursor) = cursor {
+            rx.next = cursor + 1;
+        }
+        match poll {
+            BroadcastPoll::Value(owned) => {
                 rx.last = Some(owned);
                 rx.error = None;
                 rx.waiting = false;
@@ -820,8 +807,22 @@ impl BroadcastSim {
                     ch: owned.ch,
                 }]
             }
+            BroadcastPoll::Lagged { skipped } => {
+                rx.lagged_total += skipped;
+                rx.waiting = false;
+                rx.error = Some(BroadcastError::Lagged(skipped));
+                vec![BroadcastEvent::Lagged {
+                    receiver,
+                    n: skipped,
+                }]
+            }
+            BroadcastPoll::Closed => {
+                rx.error = Some(BroadcastError::Closed);
+                rx.waiting = false;
+                Vec::new()
+            }
             // nothing new: the recv blocks until the next send
-            None => {
+            BroadcastPoll::Empty { .. } => {
                 rx.waiting = true;
                 Vec::new()
             }
@@ -840,6 +841,7 @@ impl BroadcastSim {
                 owner: conn,
                 blocked: false,
             });
+            self.core.add_sender();
             events.push(BroadcastEvent::SenderJoined {
                 conn: BROADCAST_HOST_CONN,
                 owner: conn,
@@ -866,6 +868,7 @@ impl BroadcastSim {
             .collect();
         for handle in dropped {
             self.senders.retain(|s| s.conn != handle);
+            self.core.drop_sender();
             events.push(BroadcastEvent::SenderLeft { conn: handle });
         }
         let receivers: Vec<u64> = self
@@ -875,7 +878,7 @@ impl BroadcastSim {
             .map(|r| r.receiver)
             .collect();
         for receiver in receivers {
-            self.receivers.retain(|r| r.receiver != receiver);
+            self.drop_receiver(receiver);
             events.push(BroadcastEvent::ReceiverRemoved { receiver });
         }
         if self.presenter == Some(conn) {
@@ -906,8 +909,8 @@ impl BroadcastSim {
     pub fn snapshot(&self) -> BroadcastSnapshot {
         BroadcastSnapshot {
             senders: self.senders.clone(),
-            buffer: self.buffer.iter().copied().collect(),
-            tail: self.tail,
+            buffer: self.core.ring().map(|(_, value)| *value).collect(),
+            tail: self.core.next_seq(),
             receivers: self.receivers.clone(),
             presenter: self.presenter,
         }
@@ -1470,6 +1473,18 @@ mod broadcast_tests {
         sim.handle(&BroadcastWire::Send { conn, ch }, conn)
     }
 
+    /// Send from the host seed handle on behalf of the connection that owns
+    /// it (the presenter, once claimed).
+    fn host_send(sim: &mut BroadcastSim, owner: u64, ch: char) -> Vec<BroadcastEvent> {
+        sim.handle(
+            &BroadcastWire::Send {
+                conn: BROADCAST_HOST_CONN,
+                ch,
+            },
+            owner,
+        )
+    }
+
     fn subscribe(sim: &mut BroadcastSim, conn: u64) -> u64 {
         match &sim.handle(&BroadcastWire::Subscribe, conn)[..] {
             [BroadcastEvent::ReceiverAdded { receiver, owner }] => {
@@ -1519,10 +1534,12 @@ mod broadcast_tests {
     #[test]
     fn send_never_blocks_and_evicts_oldest() {
         let mut sim = BroadcastSim::new();
+        // tokio's send fails when no receiver is left, so the channel needs
+        // one before values can flow
+        subscribe(&mut sim, 9);
         let mut events = Vec::new();
-        for (i, ch) in ('a'..).take(BROADCAST_CAPACITY + 2).enumerate() {
+        for ch in ('a'..).take(BROADCAST_CAPACITY + 2) {
             events.extend(bsend(&mut sim, BROADCAST_HOST_CONN, ch));
-            let _ = i;
         }
         // 'a' and 'b' were evicted, in order
         let evicted: Vec<char> = events
@@ -1539,61 +1556,67 @@ mod broadcast_tests {
         assert_eq!(snap.tail, 7);
     }
 
+    /// tokio's `subscribe` starts a receiver at the tail: it sees only what
+    /// is sent afterwards, never the history still held in the ring.
     #[test]
-    fn subscribe_mid_stream_starts_at_oldest() {
+    fn subscribe_mid_stream_starts_at_the_tail() {
         let mut sim = BroadcastSim::new();
+        let early = subscribe(&mut sim, 9);
         for ch in 'a'..'d' {
             bsend(&mut sim, BROADCAST_HOST_CONN, ch);
         }
         let receiver = subscribe(&mut sim, 5);
-        assert_eq!(rx(&sim, receiver).next, 1, "oldest buffered value");
-        // the receiver clicks through the buffered values
-        let events = recv(&mut sim, receiver, 5);
-        assert_eq!(events, vec![BroadcastEvent::Received { receiver, ch: 'a' }]);
-        assert_eq!(rx(&sim, receiver).next, 2);
+        assert_eq!(rx(&sim, receiver).next, 4, "past every buffered value");
+
+        // nothing to read yet: the recv arms and waits for the next send
+        assert!(recv(&mut sim, receiver, 5).is_empty());
+        assert!(rx(&sim, receiver).waiting);
+
+        // the next send reaches it, and the buffered history never does
+        let events = bsend(&mut sim, BROADCAST_HOST_CONN, 'z');
+        assert!(events.contains(&BroadcastEvent::Received { receiver, ch: 'z' }));
+        assert_eq!(rx(&sim, receiver).last.map(|b| b.ch), Some('z'));
+        let _ = early;
     }
 
     #[test]
     fn recv_advances_index_and_reports_last_value() {
         let mut sim = BroadcastSim::new();
-        for ch in 'a'..'c' {
-            bsend(&mut sim, BROADCAST_HOST_CONN, ch);
-        }
-        let receiver = subscribe(&mut sim, 3);
-        let _ = recv(&mut sim, receiver, 3);
-        let state = rx(&sim, receiver);
-        assert_eq!(
-            state.last,
-            Some(BufferChar {
-                ch: 'a',
-                conn: BROADCAST_HOST_CONN
-            })
-        );
-        assert_eq!(state.next, 2);
-        assert!(state.error.is_none());
-    }
-
-    #[test]
-    fn recv_yields_lagged_and_resets_to_oldest() {
-        let mut sim = BroadcastSim::new();
+        let receiver = subscribe(&mut sim, 4);
         for ch in 'a'..'d' {
             bsend(&mut sim, BROADCAST_HOST_CONN, ch);
         }
-        let receiver = subscribe(&mut sim, 4); // next = 1
+        let events = recv(&mut sim, receiver, 4);
+        assert_eq!(events, vec![BroadcastEvent::Received { receiver, ch: 'a' }]);
+        let state = rx(&sim, receiver);
+        assert_eq!(state.last, Some(BufferChar { ch: 'a', conn: 0 }));
+        assert_eq!(state.next, 2);
 
-        // five more sends evict 'a'..'b'..: oldest moves past the receiver
-        for ch in 'd'..'i' {
+        let events = recv(&mut sim, receiver, 4);
+        assert_eq!(events, vec![BroadcastEvent::Received { receiver, ch: 'b' }]);
+        assert_eq!(rx(&sim, receiver).next, 3);
+    }
+
+    /// Lag now arises the way it does in tokio: subscribe at the tail, then
+    /// fall behind while the ring overwrites what you have not read.
+    #[test]
+    fn recv_yields_lagged_and_resumes_at_oldest() {
+        let mut sim = BroadcastSim::new();
+        let receiver = subscribe(&mut sim, 4);
+
+        // capacity + 3 sends while the receiver reads nothing: the three
+        // oldest values are evicted out from under it
+        for ch in ('a'..).take(BROADCAST_CAPACITY + 3) {
             bsend(&mut sim, BROADCAST_HOST_CONN, ch);
         }
 
         let events = recv(&mut sim, receiver, 4);
         assert_eq!(events, vec![BroadcastEvent::Lagged { receiver, n: 3 }]);
         let state = rx(&sim, receiver);
-        assert_eq!(state.next, 4, "reset to the now-oldest value");
         assert_eq!(state.lagged_total, 3);
         assert_eq!(state.error, Some(BroadcastError::Lagged(3)));
 
-        // the next receive yields the oldest buffered value, error cleared
+        // the next receive resumes at the oldest retained value, error cleared
         let events = recv(&mut sim, receiver, 4);
         assert_eq!(events, vec![BroadcastEvent::Received { receiver, ch: 'd' }]);
         assert!(rx(&sim, receiver).error.is_none());
@@ -1655,6 +1678,33 @@ mod broadcast_tests {
         assert_eq!(sim.presenter(), Some(9));
         assert_eq!(sim.owner_of_sender(BROADCAST_HOST_CONN), Some(9));
         assert_eq!(sim.owned_senders(9), vec![BROADCAST_HOST_CONN]);
+    }
+
+    /// Regression: closing used to be checked before the buffer, so a
+    /// receiver holding unread values got `Closed` and the values were lost.
+    /// tokio drains what is retained first and only then reports closure.
+    #[test]
+    fn closed_channel_drains_buffered_values_first() {
+        let mut sim = BroadcastSim::new();
+        sim.handle(&BroadcastWire::ClaimPresenter, 1);
+        let receiver = subscribe(&mut sim, 2);
+        // the presenter owns the host handle once claimed, so it sends
+        host_send(&mut sim, 1, 'a');
+        host_send(&mut sim, 1, 'b');
+
+        // the presenter leaves: every sender handle is gone
+        sim.drop_connection(1);
+        assert!(sim.snapshot().senders.is_empty());
+
+        // the buffered values are still owed to the receiver
+        let events = recv(&mut sim, receiver, 2);
+        assert_eq!(events, vec![BroadcastEvent::Received { receiver, ch: 'a' }]);
+        let events = recv(&mut sim, receiver, 2);
+        assert_eq!(events, vec![BroadcastEvent::Received { receiver, ch: 'b' }]);
+
+        // only once drained does the channel report itself closed
+        assert!(recv(&mut sim, receiver, 2).is_empty());
+        assert_eq!(rx(&sim, receiver).error, Some(BroadcastError::Closed));
     }
 
     #[test]

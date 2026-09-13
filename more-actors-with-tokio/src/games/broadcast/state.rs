@@ -41,23 +41,37 @@ impl ChannelState {
         self.flights.with_mut(|f| f.retain(|fl| fl.key != key));
     }
 
+    /// Returns the key of a flight this event started, if any.
+    ///
+    /// Matched exhaustively on purpose: a new event must be classified here
+    /// rather than silently ignored by a catch-all.
     pub fn apply(mut self, event: BroadcastEvent) -> Option<u64> {
-        if let BroadcastEvent::InFlight { conn, ch } = event {
-            let key = *self.key.read() + 1;
-            self.key.set(key);
-            self.flights.with_mut(|f| {
-                f.push(Flight {
-                    key,
-                    from: conn,
-                    ch,
-                })
-            });
-            return Some(key);
+        match event {
+            BroadcastEvent::InFlight { conn, ch } => {
+                let key = *self.key.read() + 1;
+                self.key.set(key);
+                self.flights.with_mut(|f| {
+                    f.push(Flight {
+                        key,
+                        from: conn,
+                        ch,
+                    })
+                });
+                Some(key)
+            }
+            BroadcastEvent::Snapshot { state } => {
+                self.snap.set(state);
+                None
+            }
+            // covered by the Snapshot that follows in the same batch
+            BroadcastEvent::Hello { .. }
+            | BroadcastEvent::SenderJoined { .. }
+            | BroadcastEvent::SenderLeft { .. }
+            | BroadcastEvent::ReceiverAdded { .. }
+            | BroadcastEvent::ReceiverRemoved { .. }
+            | BroadcastEvent::Evicted { .. }
+            | BroadcastEvent::Received { .. }
+            | BroadcastEvent::Lagged { .. } => None,
         }
-        if let BroadcastEvent::Snapshot { state } = event {
-            self.snap.set(state);
-        }
-        // everything else is covered by the Snapshot that follows
-        None
     }
 }
