@@ -187,6 +187,12 @@ impl<T> BroadcastCore<T> {
         self.ring.is_empty()
     }
 
+    /// Retained values, oldest first, each with its sequence number. The
+    /// ring holds the newest `capacity` values ever sent.
+    pub fn ring(&self) -> impl Iterator<Item = (u64, &T)> {
+        self.ring.iter().map(|(seq, value)| (*seq, value))
+    }
+
     /// Sequence number the next sent value will get.
     pub fn next_seq(&self) -> u64 {
         self.next_seq
@@ -614,6 +620,17 @@ mod core_tests {
         let fresh = core.subscribe();
         assert_eq!(fresh, rx, "dead slots are recycled");
         assert_eq!(core.receiver_count(), 1);
+    }
+
+    #[test]
+    fn ring_yields_retained_values_oldest_first_with_seqs() {
+        let mut core = BroadcastCore::new(2);
+        core.subscribe();
+        for ch in ['a', 'b', 'c'] {
+            core.send(ch).expect("receiver alive");
+        }
+        // capacity 2: 'a' (seq 0) was evicted
+        assert_eq!(core.ring().collect::<Vec<_>>(), [(1, &'b'), (2, &'c')]);
     }
 }
 
