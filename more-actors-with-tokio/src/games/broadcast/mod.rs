@@ -43,6 +43,16 @@ fn dispatch_local(mut sim: Signal<BroadcastSim>, chan: &ChannelState, wire: Broa
     chan.set_snapshot(sim.read().snapshot());
 }
 
+/// Route a wire to the in-browser sim (single-player) or over the game
+/// socket. Every call site goes through here so the two modes cannot drift.
+fn dispatch(conn: GameConnection, sim: Signal<BroadcastSim>, chan: &ChannelState, wire: BroadcastWire) {
+    if conn.is_local() {
+        dispatch_local(sim, chan, wire);
+    } else {
+        conn.send(&wire);
+    }
+}
+
 fn send_from(
     conn: GameConnection,
     sim: Signal<BroadcastSim>,
@@ -56,12 +66,7 @@ fn send_from(
         .find(|(c, _)| *c == handle)
         .map(|(_, ch)| *ch);
     if let Some(ch) = draft {
-        let wire = BroadcastWire::Send { conn: handle, ch };
-        if conn.is_local() {
-            dispatch_local(sim, chan, wire);
-        } else {
-            conn.send(&wire);
-        }
+        dispatch(conn, sim, chan, BroadcastWire::Send { conn: handle, ch });
         drafts.with_mut(|d| d.retain(|(c, _)| *c != handle));
     }
 }
@@ -224,12 +229,7 @@ pub fn BroadcastGame() -> Element {
                             disabled: !conn.connected() || my_receiver().is_some(),
                             title: "subscribe a receiver via this sender — it starts at the tail, so it only sees values sent from now on (one per client)",
                             onclick: move |_| {
-                                let wire = BroadcastWire::Subscribe;
-                                if conn.is_local() {
-                                    dispatch_local(sim, &chan, wire);
-                                } else {
-                                    conn.send(&wire);
-                                }
+                                dispatch(conn, sim, &chan, BroadcastWire::Subscribe);
                             },
                             "subscribe"
                         }
@@ -239,11 +239,7 @@ pub fn BroadcastGame() -> Element {
                             title: "clone this sender — the clone is yours",
                             onclick: move |_| {
                                 let wire = BroadcastWire::CloneSender { source: view.conn };
-                                if conn.is_local() {
-                                    dispatch_local(sim, &chan, wire);
-                                } else {
-                                    conn.send(&wire);
-                                }
+                                dispatch(conn, sim, &chan, wire);
                             },
                             "clone"
                         }
@@ -291,19 +287,11 @@ pub fn BroadcastGame() -> Element {
                     connected: conn.connected(),
                     onreceive: move |_| {
                         let wire = BroadcastWire::Receive { receiver: view.rx.receiver };
-                        if conn.is_local() {
-                            dispatch_local(sim, &chan, wire);
-                        } else {
-                            conn.send(&wire);
-                        }
+                        dispatch(conn, sim, &chan, wire);
                     },
                     ondrop: move |_| {
                         let wire = BroadcastWire::Unsubscribe { receiver: view.rx.receiver };
-                        if conn.is_local() {
-                            dispatch_local(sim, &chan, wire);
-                        } else {
-                            conn.send(&wire);
-                        }
+                        dispatch(conn, sim, &chan, wire);
                     },
                 }
             }
