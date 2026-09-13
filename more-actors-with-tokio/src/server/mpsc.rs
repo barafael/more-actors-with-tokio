@@ -2,7 +2,6 @@
 //! plane. After every state change the actor publishes the full snapshot;
 //! discrete events only carry animation triggers.
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
@@ -11,14 +10,8 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
 use crate::protocol::{MpscEvent, MpscSnapshot, MpscWire, MPSC_FLIGHT_MS};
-use crate::server::{send_json, set_mpsc_handles, DEAD_PEER_TIMEOUT};
+use crate::server::{next_conn, send_json, AppState, DEAD_PEER_TIMEOUT};
 use crate::sim::{now_ms, MpscSim};
-
-static NEXT_CONN: AtomicU64 = AtomicU64::new(1);
-
-pub fn next_conn() -> u64 {
-    NEXT_CONN.fetch_add(1, Ordering::Relaxed)
-}
 
 pub enum MpscMsg {
     Send {
@@ -156,34 +149,33 @@ impl MpscHandles {
     }
 }
 
-pub async fn backend(restart: mpsc::UnboundedReceiver<()>) {
-    crate::server::supervise(
-        "mpsc",
-        restart,
-        |token| {
-            let (cmd_tx, cmd_rx) = mpsc::channel(64);
-            let (evt_tx, _) = broadcast::channel(256);
-            let events = evt_tx.clone();
-            let task = tokio::spawn(async move {
-                MpscService::default()
-                    .event_loop(cmd_rx, events, token)
-                    .await;
-            });
-            (MpscHandles { cmd_tx, evt_tx }, task)
-        },
-        set_mpsc_handles,
-    )
+pub async fn backend(
+    restart: mpsc::UnboundedReceiver<()>,
+    handles_tx: tokio::sync::watch::Sender<Option<MpscHandles>>,
+) {
+    crate::server::supervise("mpsc", restart, handles_tx, |token| {
+        let (cmd_tx, cmd_rx) = mpsc::channel(64);
+        let (evt_tx, _) = broadcast::channel(256);
+        let events = evt_tx.clone();
+        let task = tokio::spawn(async move {
+            MpscService::default().event_loop(cmd_rx, events, token).await;
+        });
+        (MpscHandles { cmd_tx, evt_tx }, task)
+    })
     .await
 }
 
-pub async fn mpsc_socket(ws: WebSocketUpgrade) -> Response {
-    ws.on_upgrade(handle_mpsc_socket)
+pub async fn mpsc_socket(
+    ws: WebSocketUpgrade,
+    axum::extract::State(state): axum::extract::State<AppState>,
+) -> Response {
+    ws.on_upgrade(move |socket| handle_mpsc_socket(socket, state))
 }
 
-async fn handle_mpsc_socket(mut socket: WebSocket) {
+async fn handle_mpsc_socket(mut socket: WebSocket, state: AppState) {
     let conn = next_conn();
 
-    let Some(handles) = crate::server::mpsc_handles() else {
+    let Some(handles) = state.mpsc.handles() else {
         close_restarting(&mut socket).await;
         return;
     };
