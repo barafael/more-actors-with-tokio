@@ -1,6 +1,5 @@
-use std::sync::OnceLock;
-
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
+use axum::extract::State;
 use axum::response::Response;
 use tokio::sync::{mpsc as tokio_mpsc, watch as tokio_watch};
 
@@ -15,67 +14,139 @@ pub mod button;
 pub mod mpsc;
 pub mod watch;
 
+/// Connection ids, unique across every game.
+///
+/// A connection's id doubles as its palette slot, so the same person must
+/// get the same id — and colour — in all four games. Per-game counters made
+/// that true only by coincidence, while join counts happened to match.
+static NEXT_CONN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+pub fn next_conn() -> u64 {
+    NEXT_CONN.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
 /// How long a connection may stay silent before it is treated as gone.
 /// Clients ping every 3s, so this is about eight missed pings.
 pub(crate) const DEAD_PEER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(25);
 
-pub struct AppState {
+/// One game's control plane, as seen by a socket handler.
+///
+/// The actor behind it is replaced on every restart, so its handles are
+/// published on a `watch` rather than kept behind a lock: the supervisor
+/// sends, sockets borrow the latest. `None` means no actor is live right
+/// now, which is what makes a connecting client retry.
+pub struct GamePlane<H> {
+    handles: tokio_watch::Receiver<Option<H>>,
+    restart_tx: tokio_mpsc::UnboundedSender<()>,
+}
+
+impl<H: Clone> GamePlane<H> {
+    /// The current actor's handles, if one is live.
+    pub fn handles(&self) -> Option<H> {
+        self.handles.borrow().clone()
+    }
+
+    /// Ask the supervisor to tear this actor down and spawn a fresh one.
+    pub fn restart(&self) {
+        self.restart_tx
+            .send(())
+            .inspect_err(|error| tracing::warn!(%error, "restart supervisor is gone"))
+            .ok();
+    }
+}
+
+/// Everything a request handler needs. Held by axum as router state; no
+/// globals, and every field is a channel endpoint rather than shared
+/// protected state.
+#[derive(Clone)]
+pub struct AppState(std::sync::Arc<Planes>);
+
+pub struct Planes {
+    /// Current slide, with `watch` semantics: late joiners get the value.
     pub slide_tx: tokio_watch::Sender<usize>,
-    pub button_restart_tx: tokio_mpsc::UnboundedSender<()>,
-    pub mpsc_restart_tx: tokio_mpsc::UnboundedSender<()>,
-    pub watch_restart_tx: tokio_mpsc::UnboundedSender<()>,
-    pub broadcast_restart_tx: tokio_mpsc::UnboundedSender<()>,
+    pub button: GamePlane<ButtonHandles>,
+    pub mpsc: GamePlane<MpscHandles>,
+    pub watch: GamePlane<WatchHandles>,
+    pub broadcast: GamePlane<BroadcastHandles>,
 }
 
-static STATE: OnceLock<AppState> = OnceLock::new();
-static BUTTON: std::sync::RwLock<Option<ButtonHandles>> = std::sync::RwLock::new(None);
-static MPSC: std::sync::RwLock<Option<MpscHandles>> = std::sync::RwLock::new(None);
-static WATCH: std::sync::RwLock<Option<WatchHandles>> = std::sync::RwLock::new(None);
-static BROADCAST: std::sync::RwLock<Option<BroadcastHandles>> = std::sync::RwLock::new(None);
+impl std::ops::Deref for AppState {
+    type Target = Planes;
 
-pub fn state() -> &'static AppState {
-    STATE.get_or_init(|| {
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl AppState {
+    /// Spawn every game actor and return the state that talks to them.
+    pub fn spawn() -> Self {
         let (slide_tx, _slide_rx) = tokio_watch::channel(0usize);
-        let (button_restart_tx, button_restart_rx) = tokio_mpsc::unbounded_channel();
-        let (mpsc_restart_tx, mpsc_restart_rx) = tokio_mpsc::unbounded_channel();
-        let (watch_restart_tx, watch_restart_rx) = tokio_mpsc::unbounded_channel();
-        let (broadcast_restart_tx, broadcast_restart_rx) = tokio_mpsc::unbounded_channel();
-        tokio::spawn(button::backend(button_restart_rx));
-        tokio::spawn(mpsc::backend(mpsc_restart_rx));
-        tokio::spawn(watch::backend(watch_restart_rx));
-        tokio::spawn(broadcast::backend(broadcast_restart_rx));
-        AppState {
+        Self(std::sync::Arc::new(Planes {
             slide_tx,
-            button_restart_tx,
-            mpsc_restart_tx,
-            watch_restart_tx,
-            broadcast_restart_tx,
+            button: plane(button::backend),
+            mpsc: plane(mpsc::backend),
+            watch: plane(watch::backend),
+            broadcast: plane(broadcast::backend),
+        }))
+    }
+
+    pub fn plane_for(&self, game: Game) -> &dyn Restartable {
+        match game {
+            Game::Button => &self.button,
+            Game::Mpsc => &self.mpsc,
+            Game::Watch => &self.watch,
+            Game::Broadcast => &self.broadcast,
         }
-    })
+    }
 }
 
-/// Supervises one game actor: spawn it, hand its handles out, and respawn a
+/// Restarting is the one thing the app plane does uniformly across games.
+pub trait Restartable {
+    fn restart(&self);
+}
+
+impl<H: Clone> Restartable for GamePlane<H> {
+    fn restart(&self) {
+        GamePlane::restart(self);
+    }
+}
+
+/// Spawn one game's supervisor and wire up its plane.
+fn plane<H, F, Fut>(backend: F) -> GamePlane<H>
+where
+    H: Send + Sync + 'static,
+    F: FnOnce(tokio_mpsc::UnboundedReceiver<()>, tokio_watch::Sender<Option<H>>) -> Fut,
+    Fut: std::future::Future<Output = ()> + Send + 'static,
+{
+    let (restart_tx, restart_rx) = tokio_mpsc::unbounded_channel();
+    let (handles_tx, handles_rx) = tokio_watch::channel(None);
+    tokio::spawn(backend(restart_rx, handles_tx));
+    GamePlane {
+        handles: handles_rx,
+        restart_tx,
+    }
+}
+
+/// Supervises one game actor: spawn it, publish its handles, and respawn a
 /// fresh one whenever a restart is requested or the actor returns.
 ///
 /// `spawn` builds the actor's channels and returns the handles alongside the
-/// running task; `install` publishes them for socket handlers to pick up.
-/// The new handles are installed before the old ones are cleared, so there
-/// is no window in which a connecting client finds no actor at all — which
-/// is what the previous fixed 50ms sleep was guessing at.
-pub(crate) async fn supervise<H, F, S>(
+/// running task. The new handles are published before the old ones are
+/// cleared, so there is no window in which a connecting client finds no
+/// actor at all — which is what a fixed sleep here used to guess at.
+pub(crate) async fn supervise<H, S>(
     name: &'static str,
     mut restart: tokio_mpsc::UnboundedReceiver<()>,
+    handles_tx: tokio_watch::Sender<Option<H>>,
     mut spawn: S,
-    install: F,
-) -> !
-where
-    F: Fn(Option<H>),
+) where
     S: FnMut(tokio_util::sync::CancellationToken) -> (H, tokio::task::JoinHandle<()>),
 {
     loop {
         let token = tokio_util::sync::CancellationToken::new();
         let (handles, mut task) = spawn(token.clone());
-        install(Some(handles));
+        handles_tx.send_replace(Some(handles));
 
         let outcome = tokio::select! {
             _ = restart.recv() => {
@@ -89,46 +160,15 @@ where
             // a panicking actor would otherwise respawn silently forever
             tracing::error!(%error, game = name, "actor task failed");
         }
-        install(None);
+        handles_tx.send_replace(None);
     }
-}
-
-pub fn button_handles() -> Option<ButtonHandles> {
-    BUTTON.read().ok()?.clone()
-}
-
-pub fn set_button_handles(handles: Option<ButtonHandles>) {
-    *BUTTON.write().expect("button handles lock") = handles;
-}
-
-pub fn mpsc_handles() -> Option<MpscHandles> {
-    MPSC.read().ok()?.clone()
-}
-
-pub fn set_mpsc_handles(handles: Option<MpscHandles>) {
-    *MPSC.write().expect("mpsc handles lock") = handles;
-}
-
-pub fn watch_handles() -> Option<WatchHandles> {
-    WATCH.read().ok()?.clone()
-}
-
-pub fn set_watch_handles(handles: Option<WatchHandles>) {
-    *WATCH.write().expect("watch handles lock") = handles;
-}
-
-pub fn broadcast_handles() -> Option<BroadcastHandles> {
-    BROADCAST.read().ok()?.clone()
-}
-
-pub fn set_broadcast_handles(handles: Option<BroadcastHandles>) {
-    *BROADCAST.write().expect("broadcast handles lock") = handles;
 }
 
 pub fn serve_app() -> ! {
     dioxus::server::serve(|| async {
-        let _state = state();
-        let router = dioxus::server::router(crate::App)
+        // The websocket routes carry AppState; `with_state` resolves it away
+        // so the result merges into the dioxus router, which is stateless.
+        let sockets = axum::Router::new()
             .route("/ws/app", axum::routing::get(app_socket))
             .route("/ws/game/button", axum::routing::get(button::button_socket))
             .route("/ws/game/mpsc", axum::routing::get(mpsc::mpsc_socket))
@@ -136,17 +176,18 @@ pub fn serve_app() -> ! {
             .route(
                 "/ws/game/broadcast",
                 axum::routing::get(broadcast::broadcast_socket),
-            );
+            )
+            .with_state(AppState::spawn());
+        let router = dioxus::server::router(crate::App).merge(sockets);
         Ok::<_, anyhow::Error>(router)
     })
 }
 
-async fn app_socket(ws: WebSocketUpgrade) -> Response {
-    ws.on_upgrade(handle_app_socket)
+async fn app_socket(ws: WebSocketUpgrade, State(state): State<AppState>) -> Response {
+    ws.on_upgrade(move |socket| handle_app_socket(socket, state))
 }
 
-async fn handle_app_socket(mut socket: WebSocket) {
-    let state = state();
+async fn handle_app_socket(mut socket: WebSocket, state: AppState) {
     let mut slide_rx = state.slide_tx.subscribe();
 
     let down = AppDown {
@@ -178,20 +219,7 @@ async fn handle_app_socket(mut socket: WebSocket) {
                         state.slide_tx.send_modify(|slide| *slide = (*slide + SLIDE_COUNT - 1) % SLIDE_COUNT);
                     }
                     // exhaustive: a new game cannot be silently unroutable
-                    Ok(AppUp::Restart { game }) => {
-                        let restart = match game {
-                            Game::Button => &state.button_restart_tx,
-                            Game::Mpsc => &state.mpsc_restart_tx,
-                            Game::Watch => &state.watch_restart_tx,
-                            Game::Broadcast => &state.broadcast_restart_tx,
-                        };
-                        restart
-                            .send(())
-                            .inspect_err(|error| {
-                                tracing::warn!(%error, ?game, "restart supervisor is gone");
-                            })
-                            .ok();
-                    }
+                    Ok(AppUp::Restart { game }) => state.plane_for(game).restart(),
                     Err(error) => {
                         tracing::debug!(%error, "ignoring undecodable app message");
                     }

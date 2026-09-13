@@ -4,7 +4,7 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
 use crate::protocol::{ButtonEvent, ButtonState, ButtonWire, Color};
-use crate::server::{send_json, set_button_handles};
+use crate::server::{send_json, AppState};
 use crate::sim::ButtonSim;
 
 pub enum ButtonMsg {
@@ -66,32 +66,31 @@ impl ButtonHandles {
     }
 }
 
-pub async fn backend(restart: mpsc::UnboundedReceiver<()>) {
-    crate::server::supervise(
-        "button",
-        restart,
-        |token| {
-            let (cmd_tx, cmd_rx) = mpsc::channel(64);
-            let (evt_tx, _) = broadcast::channel(64);
-            let events = evt_tx.clone();
-            let task = tokio::spawn(async move {
-                ButtonService::default()
-                    .event_loop(cmd_rx, events, token)
-                    .await;
-            });
-            (ButtonHandles { cmd_tx, evt_tx }, task)
-        },
-        set_button_handles,
-    )
+pub async fn backend(
+    restart: mpsc::UnboundedReceiver<()>,
+    handles_tx: tokio::sync::watch::Sender<Option<ButtonHandles>>,
+) {
+    crate::server::supervise("button", restart, handles_tx, |token| {
+        let (cmd_tx, cmd_rx) = mpsc::channel(64);
+        let (evt_tx, _) = broadcast::channel(64);
+        let events = evt_tx.clone();
+        let task = tokio::spawn(async move {
+            ButtonService::default().event_loop(cmd_rx, events, token).await;
+        });
+        (ButtonHandles { cmd_tx, evt_tx }, task)
+    })
     .await
 }
 
-pub async fn button_socket(ws: WebSocketUpgrade) -> Response {
-    ws.on_upgrade(handle_button_socket)
+pub async fn button_socket(
+    ws: WebSocketUpgrade,
+    axum::extract::State(state): axum::extract::State<AppState>,
+) -> Response {
+    ws.on_upgrade(move |socket| handle_button_socket(socket, state))
 }
 
-async fn handle_button_socket(mut socket: WebSocket) {
-    let Some(handles) = crate::server::button_handles() else {
+async fn handle_button_socket(mut socket: WebSocket, state: AppState) {
+    let Some(handles) = state.button.handles() else {
         close_restarting(&mut socket).await;
         return;
     };
