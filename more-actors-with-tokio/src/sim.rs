@@ -1841,3 +1841,229 @@ mod broadcast_decode_tests {
         }
     }
 }
+
+/// Differential tests: drive a game sim and the bare `sim-channels` core
+/// through the same operation sequence and assert they still agree.
+///
+/// The sims used to be a second, hand-written model of the same four
+/// channels, and it drifted: broadcast lost buffered values on close,
+/// `subscribe` replayed history, mpsc woke parked senders at random. The
+/// drivers are thin adapters now, and these tests are what keeps them thin —
+/// they fail if a driver ever starts deciding channel behaviour for itself
+/// instead of asking the core.
+#[cfg(test)]
+mod differential_tests {
+    use super::*;
+    use sim_channels::broadcast::{BroadcastCore, BroadcastPoll};
+    use sim_channels::mpsc::{MpscCore, RecvPoll, SendOffer};
+
+    /// Every value a sequence of sends and receives hands to the consumer,
+    /// in order, according to the core alone.
+    fn core_mpsc_deliveries(ops: &[Op]) -> Vec<char> {
+        let mut core: MpscCore<char> = MpscCore::new(MPSC_CAPACITY);
+        core.add_sender();
+        let mut parked = Vec::new();
+        let mut owed = 0usize;
+        let mut got = Vec::new();
+        for op in ops {
+            match op {
+                Op::Send(ch) => match core.offer_send(*ch) {
+                    SendOffer::Blocked { waiter } => parked.push(waiter),
+                    SendOffer::Accepted | SendOffer::Rejected(_) => {}
+                },
+                Op::Receive => owed += 1,
+            }
+            // drain in the same order the driver does
+            loop {
+                let mut moved = false;
+                while owed > 0 {
+                    match core.poll_recv() {
+                        RecvPoll::Value(value) => {
+                            got.push(value);
+                            owed -= 1;
+                            moved = true;
+                        }
+                        RecvPoll::Empty { .. } | RecvPoll::Disconnected => break,
+                    }
+                }
+                parked.retain(|waiter| {
+                    matches!(core.poll_send(*waiter), sim_channels::mpsc::SendPoll::Pending)
+                });
+                if !moved {
+                    break;
+                }
+            }
+        }
+        got
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    enum Op {
+        Send(char),
+        Receive,
+    }
+
+    /// Run the same ops against the game driver, collecting what the
+    /// receiver was handed.
+    fn sim_mpsc_deliveries(ops: &[Op]) -> Vec<char> {
+        // zero flight time: landings are cosmetics and would only add delay
+        let mut sim = MpscSim::new(0.0);
+        sim.add_sender(1, 1);
+        let mut got = Vec::new();
+        let mut last = None;
+        for op in ops {
+            match op {
+                Op::Send(ch) => {
+                    sim.handle(&MpscWire::Send { conn: 1, ch: *ch }, 1);
+                }
+                Op::Receive => {
+                    sim.handle(&MpscWire::Receive, 0);
+                }
+            }
+            sim.poll_due();
+            let now = sim.snapshot().last_received;
+            if now != last {
+                if let Some(value) = now {
+                    got.push(value.ch);
+                }
+                last = now;
+            }
+        }
+        got
+    }
+
+    #[test]
+    fn mpsc_driver_delivers_exactly_what_the_core_does() {
+        // a sequence that fills the buffer, parks sends, and interleaves
+        // receives so wake order is observable
+        let mut ops = Vec::new();
+        for ch in ('a'..).take(MPSC_CAPACITY + 3) {
+            ops.push(Op::Send(ch));
+        }
+        for _ in 0..3 {
+            ops.push(Op::Receive);
+        }
+        ops.push(Op::Send('x'));
+        ops.push(Op::Receive);
+        ops.push(Op::Receive);
+        ops.push(Op::Receive);
+
+        assert_eq!(
+            sim_mpsc_deliveries(&ops),
+            core_mpsc_deliveries(&ops),
+            "the mpsc driver must not decide delivery order for itself"
+        );
+    }
+
+    #[test]
+    fn mpsc_driver_matches_the_core_when_receives_run_ahead() {
+        let ops = vec![
+            Op::Receive,
+            Op::Receive,
+            Op::Send('a'),
+            Op::Send('b'),
+            Op::Receive,
+            Op::Send('c'),
+        ];
+        assert_eq!(sim_mpsc_deliveries(&ops), core_mpsc_deliveries(&ops));
+    }
+
+    /// A fresh subscriber must see the same values in the driver as in the
+    /// core — notably none of the history already in the ring.
+    #[test]
+    fn broadcast_driver_delivers_exactly_what_the_core_does() {
+        let sent = ['a', 'b', 'c', 'd', 'e', 'f', 'g'];
+
+        let mut core: BroadcastCore<char> = BroadcastCore::new(BROADCAST_CAPACITY);
+        let _seed = core.subscribe();
+        let mut sim = BroadcastSim::new();
+        sim.handle(&BroadcastWire::ClaimPresenter, 1);
+        sim.handle(&BroadcastWire::Subscribe, 7);
+
+        // both models take the same three sends
+        for ch in sent.iter().take(3) {
+            core.send(*ch).expect("receiver alive");
+            sim.handle(
+                &BroadcastWire::Send {
+                    conn: BROADCAST_HOST_CONN,
+                    ch: *ch,
+                },
+                1,
+            );
+        }
+
+        // then both gain a late subscriber, at the same point in the stream
+        let late = core.subscribe();
+        let events = sim.handle(&BroadcastWire::Subscribe, 8);
+        let receiver = match events[..] {
+            [BroadcastEvent::ReceiverAdded { receiver, .. }] => receiver,
+            _ => panic!("expected ReceiverAdded"),
+        };
+
+        // compare cursors before either side reads: this is where a
+        // subscribe-at-oldest regression shows, and it disappears again once
+        // both have drained the ring
+        {
+            let snap = sim.snapshot();
+            let fresh = snap
+                .receivers
+                .iter()
+                .find(|r| r.receiver == receiver)
+                .expect("receiver in snapshot");
+            assert_eq!(
+                fresh.next,
+                core.receiver_seq(late).expect("live receiver") + 1,
+                "a fresh subscriber must start where the core puts it"
+            );
+        }
+
+        for ch in sent.iter().skip(3) {
+            core.send(*ch).expect("receiver alive");
+            sim.handle(
+                &BroadcastWire::Send {
+                    conn: BROADCAST_HOST_CONN,
+                    ch: *ch,
+                },
+                1,
+            );
+        }
+
+        let mut core_got = Vec::new();
+        while let BroadcastPoll::Value(value) = core.poll_recv(late) {
+            core_got.push(value);
+        }
+        let mut sim_got = Vec::new();
+        loop {
+            let events = sim.handle(&BroadcastWire::Receive { receiver }, 8);
+            match events[..] {
+                [BroadcastEvent::Received { ch, .. }] => sim_got.push(ch),
+                _ => break,
+            }
+        }
+
+        assert_eq!(
+            sim_got, core_got,
+            "a late subscriber must see the same values in both models"
+        );
+
+        // The snapshot the UI renders must agree with the core too: `next`
+        // is drawn as "next #N" and positions the index line, so a cursor
+        // the core does not actually hold is a lie on screen.
+        let snap = sim.snapshot();
+        let rendered = snap
+            .receivers
+            .iter()
+            .find(|r| r.receiver == receiver)
+            .expect("receiver in snapshot");
+        assert_eq!(
+            rendered.next,
+            core.receiver_seq(late).expect("live receiver") + 1,
+            "the rendered cursor must be the core's, mapped 0-based to 1-based"
+        );
+        assert_eq!(
+            snap.buffer.iter().map(|b| b.ch).collect::<Vec<_>>(),
+            core.ring().map(|(_, value)| *value).collect::<Vec<_>>(),
+            "the rendered buffer must be the core's ring"
+        );
+    }
+}
