@@ -42,7 +42,7 @@ fn restart(
         conn.set_status("single-player");
     } else {
         ctx.send(crate::AppUp::Restart {
-            game: "button".to_string(),
+            game: crate::protocol::Game::Button,
         });
     }
 }

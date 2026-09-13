@@ -11,7 +11,7 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
 use crate::protocol::{MpscEvent, MpscSnapshot, MpscWire, MPSC_FLIGHT_MS};
-use crate::server::{send_json, set_mpsc_handles};
+use crate::server::{send_json, set_mpsc_handles, DEAD_PEER_TIMEOUT};
 use crate::sim::{now_ms, MpscSim};
 
 static NEXT_CONN: AtomicU64 = AtomicU64::new(1);
@@ -156,29 +156,24 @@ impl MpscHandles {
     }
 }
 
-pub async fn backend(mut restart: mpsc::UnboundedReceiver<()>) {
-    loop {
-        let token = CancellationToken::new();
-        let (cmd_tx, cmd_rx) = mpsc::channel(64);
-        let (evt_tx, _) = broadcast::channel(256);
-        let keepalive = cmd_tx.clone();
-        let mut task =
-            tokio::spawn(MpscService::default().event_loop(cmd_rx, evt_tx.clone(), token.clone()));
-        set_mpsc_handles(Some(MpscHandles { cmd_tx, evt_tx }));
-
-        let outcome = tokio::select! {
-            _ = restart.recv() => {
-                token.cancel();
-                task.await
-            }
-            outcome = &mut task => outcome,
-        };
-
-        let _final_state = outcome.expect("mpsc actor panicked");
-        set_mpsc_handles(None);
-        drop(keepalive);
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    }
+pub async fn backend(restart: mpsc::UnboundedReceiver<()>) {
+    crate::server::supervise(
+        "mpsc",
+        restart,
+        |token| {
+            let (cmd_tx, cmd_rx) = mpsc::channel(64);
+            let (evt_tx, _) = broadcast::channel(256);
+            let events = evt_tx.clone();
+            let task = tokio::spawn(async move {
+                MpscService::default()
+                    .event_loop(cmd_rx, events, token)
+                    .await;
+            });
+            (MpscHandles { cmd_tx, evt_tx }, task)
+        },
+        set_mpsc_handles,
+    )
+    .await
 }
 
 pub async fn mpsc_socket(ws: WebSocketUpgrade) -> Response {
@@ -242,9 +237,11 @@ async fn handle_mpsc_socket(mut socket: WebSocket) {
         loop {
             tokio::select! {
                 _ = tokio::time::sleep(std::time::Duration::from_secs(5)) => {
-                    // dead-peer detection: a connection silent for 25s
-                    // (crashed tab, lost wifi) is dropped
-                    if last_seen.elapsed() > std::time::Duration::from_secs(10) {
+                    // Dead-peer detection. Clients ping every 3s, so 25s is
+                    // about eight missed pings: long enough that a phone
+                    // backgrounded mid-talk keeps its handle, short enough
+                    // that a crashed tab frees one.
+                    if last_seen.elapsed() > DEAD_PEER_TIMEOUT {
                         break;
                     }
                 }

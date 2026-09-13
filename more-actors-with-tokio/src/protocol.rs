@@ -56,11 +56,20 @@ impl ButtonState {
     }
 }
 
+/// The four minigames, each backed by one actor on the server.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Game {
+    Button,
+    Mpsc,
+    Watch,
+    Broadcast,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AppUp {
     AdvanceSlide,
     PreviousSlide,
-    Restart { game: String },
+    Restart { game: Game },
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]

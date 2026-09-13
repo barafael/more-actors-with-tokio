@@ -2288,6 +2288,7 @@ dependencies = [
  "syntect",
  "tokio",
  "tokio-util",
+ "tracing",
  "wasm-bindgen",
  "web-sys",
 ]

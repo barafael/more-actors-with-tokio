@@ -4,7 +4,7 @@ use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::response::Response;
 use tokio::sync::{mpsc as tokio_mpsc, watch as tokio_watch};
 
-use crate::protocol::{AppDown, AppUp, SLIDE_COUNT};
+use crate::protocol::{AppDown, AppUp, Game, SLIDE_COUNT};
 use crate::server::broadcast::BroadcastHandles;
 use crate::server::button::ButtonHandles;
 use crate::server::mpsc::MpscHandles;
@@ -14,6 +14,10 @@ pub mod broadcast;
 pub mod button;
 pub mod mpsc;
 pub mod watch;
+
+/// How long a connection may stay silent before it is treated as gone.
+/// Clients ping every 3s, so this is about eight missed pings.
+pub(crate) const DEAD_PEER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(25);
 
 pub struct AppState {
     pub slide_tx: tokio_watch::Sender<usize>,
@@ -48,6 +52,45 @@ pub fn state() -> &'static AppState {
             broadcast_restart_tx,
         }
     })
+}
+
+/// Supervises one game actor: spawn it, hand its handles out, and respawn a
+/// fresh one whenever a restart is requested or the actor returns.
+///
+/// `spawn` builds the actor's channels and returns the handles alongside the
+/// running task; `install` publishes them for socket handlers to pick up.
+/// The new handles are installed before the old ones are cleared, so there
+/// is no window in which a connecting client finds no actor at all — which
+/// is what the previous fixed 50ms sleep was guessing at.
+pub(crate) async fn supervise<H, F, S>(
+    name: &'static str,
+    mut restart: tokio_mpsc::UnboundedReceiver<()>,
+    mut spawn: S,
+    install: F,
+) -> !
+where
+    F: Fn(Option<H>),
+    S: FnMut(tokio_util::sync::CancellationToken) -> (H, tokio::task::JoinHandle<()>),
+{
+    loop {
+        let token = tokio_util::sync::CancellationToken::new();
+        let (handles, mut task) = spawn(token.clone());
+        install(Some(handles));
+
+        let outcome = tokio::select! {
+            _ = restart.recv() => {
+                token.cancel();
+                task.await
+            }
+            outcome = &mut task => outcome,
+        };
+
+        if let Err(error) = outcome {
+            // a panicking actor would otherwise respawn silently forever
+            tracing::error!(%error, game = name, "actor task failed");
+        }
+        install(None);
+    }
 }
 
 pub fn button_handles() -> Option<ButtonHandles> {
@@ -134,21 +177,24 @@ async fn handle_app_socket(mut socket: WebSocket) {
                     Ok(AppUp::PreviousSlide) => {
                         state.slide_tx.send_modify(|slide| *slide = (*slide + SLIDE_COUNT - 1) % SLIDE_COUNT);
                     }
-                    Ok(AppUp::Restart { game }) if game == "button" => {
-                        let _ = state.button_restart_tx.send(());
+                    // exhaustive: a new game cannot be silently unroutable
+                    Ok(AppUp::Restart { game }) => {
+                        let restart = match game {
+                            Game::Button => &state.button_restart_tx,
+                            Game::Mpsc => &state.mpsc_restart_tx,
+                            Game::Watch => &state.watch_restart_tx,
+                            Game::Broadcast => &state.broadcast_restart_tx,
+                        };
+                        restart
+                            .send(())
+                            .inspect_err(|error| {
+                                tracing::warn!(%error, ?game, "restart supervisor is gone");
+                            })
+                            .ok();
                     }
-                    Ok(AppUp::Restart { game }) if game == "mpsc" => {
-                        let _ = state.mpsc_restart_tx.send(());
+                    Err(error) => {
+                        tracing::debug!(%error, "ignoring undecodable app message");
                     }
-                    Ok(AppUp::Restart { game }) if game == "watch" => {
-                        let _ = state.watch_restart_tx.send(());
-                    }
-                    Ok(AppUp::Restart { game }) if game == "broadcast" => {
-                        eprintln!("[app] restart broadcast");
-                        let _ = state.broadcast_restart_tx.send(());
-                    }
-                    Ok(AppUp::Restart { .. }) => {}
-                    Err(_) => {}
                 },
                 Some(Ok(_)) | None | Some(Err(_)) => break,
             },

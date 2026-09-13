@@ -81,7 +81,7 @@ fn restart(conn: GameConnection, ctx: AppCtx, mut sim: Signal<WatchSim>, mut cha
         conn.set_status("single-player");
     } else {
         ctx.send(crate::AppUp::Restart {
-            game: "watch".to_string(),
+            game: crate::protocol::Game::Watch,
         });
     }
 }

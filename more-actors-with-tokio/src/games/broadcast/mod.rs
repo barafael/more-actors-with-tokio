@@ -88,7 +88,7 @@ fn restart(
         conn.set_status("single-player");
     } else {
         ctx.send(crate::AppUp::Restart {
-            game: "broadcast".to_string(),
+            game: crate::protocol::Game::Broadcast,
         });
     }
 }
@@ -159,7 +159,7 @@ pub fn BroadcastGame() -> Element {
             .read()
             .receivers
             .iter()
-            .find(|r| r.owner == my_conn().unwrap_or(0))
+            .find(|r| Some(r.owner) == my_conn())
             .map(|r| r.receiver)
     });
     let closed = use_memo(move || senders().is_empty());
@@ -175,7 +175,7 @@ pub fn BroadcastGame() -> Element {
                 SenderView {
                     conn: s.conn,
                     owner: s.owner,
-                    mine: s.owner == my_conn().unwrap_or(0) && my_conn().is_some(),
+                    mine: Some(s.owner) == my_conn(),
                     is_host: s.conn == BROADCAST_HOST_CONN,
                     top: layout::SENDERS_TOP + i as f64 * row + (row - height) / 2.0,
                     height,
@@ -287,7 +287,7 @@ pub fn BroadcastGame() -> Element {
                     error: view.rx.error,
                     waiting: view.rx.waiting,
                     top: view.top,
-                    mine: view.rx.owner == my_conn().unwrap_or(0),
+                    mine: Some(view.rx.owner) == my_conn(),
                     connected: conn.connected(),
                     onreceive: move |_| {
                         let wire = BroadcastWire::Receive { receiver: view.rx.receiver };

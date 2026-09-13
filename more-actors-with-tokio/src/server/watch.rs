@@ -177,29 +177,24 @@ impl WatchHandles {
     }
 }
 
-pub async fn backend(mut restart: mpsc::UnboundedReceiver<()>) {
-    loop {
-        let token = CancellationToken::new();
-        let (cmd_tx, cmd_rx) = mpsc::channel(64);
-        let (evt_tx, _) = broadcast::channel(256);
-        let keepalive = cmd_tx.clone();
-        let mut task =
-            tokio::spawn(WatchService::default().event_loop(cmd_rx, evt_tx.clone(), token.clone()));
-        set_watch_handles(Some(WatchHandles { cmd_tx, evt_tx }));
-
-        let outcome = tokio::select! {
-            _ = restart.recv() => {
-                token.cancel();
-                task.await
-            }
-            outcome = &mut task => outcome,
-        };
-
-        let _final_state = outcome.expect("watch actor panicked");
-        set_watch_handles(None);
-        drop(keepalive);
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    }
+pub async fn backend(restart: mpsc::UnboundedReceiver<()>) {
+    crate::server::supervise(
+        "watch",
+        restart,
+        |token| {
+            let (cmd_tx, cmd_rx) = mpsc::channel(64);
+            let (evt_tx, _) = broadcast::channel(256);
+            let events = evt_tx.clone();
+            let task = tokio::spawn(async move {
+                WatchService::default()
+                    .event_loop(cmd_rx, events, token)
+                    .await;
+            });
+            (WatchHandles { cmd_tx, evt_tx }, task)
+        },
+        set_watch_handles,
+    )
+    .await
 }
 
 pub async fn watch_socket(ws: WebSocketUpgrade) -> Response {
