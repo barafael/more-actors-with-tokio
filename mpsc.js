@@ -1,8 +1,16 @@
 /*
- * Collector Actor minigame — composition layer.
- * Reuses the Anim, Channel and Actor libraries.
- * Top-level bindings (actor, dot, senders, ch, ...) stay inspectable so the
- * minigame can be driven and asserted from the outside.
+ * mpsc — live visualization of a tokio::sync::mpsc bounded channel.
+ * One dark receiver dot owns a bounded buffer of capacity CAP right below it.
+ * Green senders type chars that fly into the buffer; a send while the buffer is
+ * full blocks that sender until the receiver takes a char. Receive() always
+ * works: pressed with an empty buffer it simply blocks until a char lands.
+ * Each successful receive pulls the oldest char out of the buffer onto the
+ * receiver dot, remembers it as the last received value and
+ * unblocks a blocked sender.
+ * The receiver dot and every sender can be dragged around.
+ * Reuses the Anim and Channel libraries.
+ * Top-level bindings (dot, senders, ch, ...) stay inspectable so the minigame
+ * can be driven and asserted from the outside.
  */
 'use strict';
 
@@ -11,32 +19,31 @@ const ctx = c.getContext('2d');
 const toolbar = document.getElementById('toolbar');
 const senderOverlay = document.getElementById('sender-overlay');
 
-const BG = '#fff8e1';
 const TAU = Math.PI * 2;
 const DOT_R = 30;
 const SEND_R = 55;
 const CAP = 5;
+
+const SLOT_W = 20,
+  SLOT_H = 22,
+  SLOT_GAP = 5;
+const BUFF_DY = 70; // buffer strip center, below the receiver dot
 
 const TRAVEL_MS = 650;
 const POP_MS = 450;
 const SHRINK_MS = 400;
 const DESPAWN_MS = 500;
 
-const ANGLE = (-5 * Math.PI) / 6; // Receive button sits over the oval outline at ~10 o'clock (upper-left shoulder)
-
 const anim = Anim.createAnimator();
 const ch = Channel.create({ cap: CAP });
-const collector = Actor.create({ width: 230, height: 130, cap: CAP, bg: BG });
 
-let actor = null; // {x, y, scale} center of the collector oval, or null
-let dot = null; // {x, y, scale} receiver dot at the oval's top point
+let dot = null; // {x, y, scale} receiver dot holding the buffer
 let senders = []; // [{x, y, scale, blocked?, pendingChar?}]
-let received = []; // chars collected into the actor
+let received = []; // chars consumed by the receiver, oldest first
 let phase = 'idle'; // 'idle' | 'active'
 const senderButtonEls = new Map(); // sender -> {wrap, input, clone, drop}
-let receiveBtn = null; // actor's Receive button
-let closeBtn = null; // receiver's Close button
-let closed = false; // receiver closed -> buffer kept, senders cannot send
+let receiveBtn = null; // receiver's Receive button
+let lastReceivedEl = null; // label left of Receive showing the last received char
 let pendingReceive = false; // Receive pressed while buffer empty: blocks until a char arrives
 const flights = []; // airborne char glyphs
 let inFlightReceives = 0;
@@ -49,17 +56,28 @@ function usable() {
 // ---- canvas / viewport ----
 let W, H;
 function resize() {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2); // render crisp on scaled displays
   W = window.innerWidth;
   H = window.innerHeight;
-  c.width = W;
-  c.height = H;
+  c.width = Math.round(W * dpr);
+  c.height = Math.round(H * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0); // keep drawing in CSS-pixel units
   updateHudPositions();
 }
 window.addEventListener('resize', resize);
 resize();
 
 // ---- drag ----
-let drag = null; // {type:'actor'|'sender'|'dot', idx, offX, offY}
+let drag = null; // {type:'sender'|'dot', idx, offX, offY}
+
+// ---- geometry ----
+function slotTotal() {
+  return CAP * SLOT_W + (CAP - 1) * SLOT_GAP;
+}
+function slotXY(i) {
+  const x0 = dot.x - slotTotal() / 2;
+  return { x: x0 + i * (SLOT_W + SLOT_GAP) + SLOT_W / 2, y: dot.y + BUFF_DY };
+}
 
 // ---- pop-in helpers ----
 function popIn(obj, dur) {
@@ -91,23 +109,15 @@ function popInSender(s) {
 }
 
 // ---- html buttons ----
-// Step 1: create the channel (receiver dot + one sender). No actor yet.
 const createBtn = document.createElement('button');
 createBtn.className = 'btn';
 createBtn.textContent = 'Create Channel';
 createBtn.onclick = () => {
-  const cy = clamp(
-    (H * 5) / 6,
-    (H * 2) / 3 + DOT_R + collector.halfH + 10,
-    H - DOT_R - collector.halfH - 10,
-  );
-  dot = { x: W / 2, y: cy - collector.halfH };
+  dot = { x: W / 2, y: clamp((H * 34) / 100, 160, (H * 5) / 10) };
   senders = [{ x: clamp(dot.x + 190, 90, W - 90), y: clamp(H * 0.3, 90, (H * 2) / 3) }];
   phase = 'active';
-  closed = false;
   pendingReceive = false;
   ensureReceiveBtn();
-  ensureCloseBtn();
   ensureLegend();
   createSenderUI(senders[0]);
   popIn(dot, POP_MS);
@@ -115,42 +125,27 @@ createBtn.onclick = () => {
   updateButtons();
 };
 
-// Step 2: spawn the collector actor below the dot, centered in the lower third.
-const spawnBtn = document.createElement('button');
-spawnBtn.className = 'btn';
-spawnBtn.textContent = 'Spawn Actor';
-spawnBtn.onclick = () => {
-  if (phase !== 'active' || actor || senders.length === 0) return;
-  actor = spawnActorPos(dot);
-  popIn(actor, POP_MS);
-  if (pendingReceive) doReceive(); // a pre-actor receive resolves once the actor exists
-  updateButtons();
-};
-
 toolbar.appendChild(createBtn);
-toolbar.appendChild(spawnBtn);
 
-// ---- receive button (always present while active, left of dot, over oval line) ----
+// ---- receive button (always present while active, left of the dot) ----
 function ensureReceiveBtn() {
   if (receiveBtn) return;
   receiveBtn = document.createElement('button');
   receiveBtn.className = 'btn rcv';
   receiveBtn.textContent = 'Receive';
-  receiveBtn.title = 'receive the next char into the collector (blocks while empty)';
+  receiveBtn.title = 'receive the next char from the buffer (blocks while empty)';
   receiveBtn.onclick = () => doReceive();
   senderOverlay.appendChild(receiveBtn);
+
+  lastReceivedEl = document.createElement('span');
+  lastReceivedEl.className = 'recv-label';
+  lastReceivedEl.textContent = '';
+  senderOverlay.appendChild(lastReceivedEl);
 }
 
-// ---- close button (right of the receiver dot) ----
-function ensureCloseBtn() {
-  if (closeBtn) return;
-  closeBtn = document.createElement('button');
-  closeBtn.className = 'btn small close';
-  closeBtn.textContent = 'Close';
-  closeBtn.title =
-    'close the receiver: buffer content stays, every sender turns gray and can no longer send';
-  closeBtn.onclick = () => closeReceiver();
-  senderOverlay.appendChild(closeBtn);
+function setLastReceived() {
+  if (lastReceivedEl)
+    lastReceivedEl.textContent = received.length ? received[received.length - 1] : '';
 }
 
 // ---- sender ui ----
@@ -188,13 +183,6 @@ function createSenderUI(s) {
     const ns = { x: start.x, y: start.y };
     senders.push(ns);
     createSenderUI(ns);
-    if (closed) {
-      ns.blocked = true;
-      const nels = senderButtonEls.get(ns);
-      if (nels) {
-        nels.input.disabled = true;
-      }
-    }
     anim.tween(
       TRAVEL_MS,
       (t) => {
@@ -264,12 +252,6 @@ function drawFlights() {
 
 function launchSendFlight(s, val) {
   if (!usable()) return;
-  if (closed) {
-    s.blocked = true;
-    const els = senderButtonEls.get(s);
-    if (els) els.input.disabled = true;
-    return;
-  }
   const idx = ch.length + ch.reserved;
   if (!ch.launchSend(val)) {
     s.blocked = true;
@@ -284,7 +266,7 @@ function launchSendFlight(s, val) {
     sy0 = s.y;
   const f = { ch: val, x: sx0, y: sy0 };
   flights.push(f);
-  const target = () => (usable() ? collector.slotXY(dot.x, dot.y, idx) : { x: f.x, y: f.y });
+  const target = () => (usable() ? slotXY(idx) : { x: f.x, y: f.y });
   Anim.createFlight(anim, {
     fromX: sx0,
     fromY: sy0,
@@ -322,7 +304,7 @@ function launchDeliveryFlight(tx) {
     sy0 = s.y;
   const f = { ch: tx.ch, x: sx0, y: sy0, delivery: true, sender: s };
   flights.push(f);
-  const target = () => (usable() ? collector.slotXY(dot.x, dot.y, idx) : { x: f.x, y: f.y });
+  const target = () => (usable() ? slotXY(idx) : { x: f.x, y: f.y });
   Anim.createFlight(anim, {
     fromX: sx0,
     fromY: sy0,
@@ -336,7 +318,7 @@ function launchDeliveryFlight(tx) {
       const i = flights.indexOf(f);
       if (i < 0) return;
       flights.splice(i, 1);
-      if (!usable() || f.cancelled || closed) {
+      if (!usable() || f.cancelled) {
         ch.release();
         return;
       }
@@ -352,7 +334,6 @@ function launchDeliveryFlight(tx) {
 }
 
 function tryDeliverPending() {
-  if (closed) return;
   let guard = 0;
   while (guard++ < 20) {
     const tx = ch.pickBlocked();
@@ -367,15 +348,11 @@ function cancelFlightsForSender(s) {
 
 // Receive is never disabled: it can always be pressed and simply becomes an
 // async block when it cannot complete right away. A press while the buffer is
-// empty (or before the actor exists, or while another receive is in flight)
-// only queues a pending receive that auto-delivers as soon as a char lands.
+// empty (or while another receive is in flight) only queues a pending receive
+// that auto-delivers as soon as a char lands.
 function doReceive() {
-  if (inFlightReceives > 0) {
-    pendingReceive = true;
-    updateButtons();
-    return;
-  }
-  if (!actor || ch.length === 0) {
+  if (flights.length > 0) return; // ignore clicks during any animation
+  if (ch.length === 0) {
     pendingReceive = true;
     updateButtons();
     return;
@@ -386,10 +363,10 @@ function doReceive() {
 function launchReceiveFlight() {
   inFlightReceives++;
   pendingReceive = false;
-  const start = collector.slotXY(dot.x, dot.y, 0);
+  const start = slotXY(0);
   const f = { ch: ch.first, x: start.x, y: start.y };
   flights.push(f);
-  const target = () => (usable() ? collector.receivedXY(dot.x, dot.y) : { x: f.x, y: f.y });
+  const target = () => (usable() ? { x: dot.x, y: dot.y } : { x: f.x, y: f.y });
   Anim.createFlight(anim, {
     fromX: start.x,
     fromY: start.y,
@@ -410,29 +387,12 @@ function launchReceiveFlight() {
       inFlightReceives--;
       const val = ch.receive();
       if (val !== null) received.push(val);
+      setLastReceived();
       tryDeliverPending();
       if (pendingReceive && ch.length > 0) launchReceiveFlight();
       updateButtons();
     },
   });
-}
-
-// Closing the receiver keeps the buffer content; senders gray out and can't send at all.
-function closeReceiver() {
-  if (phase !== 'active' || closed || !dot) return;
-  closed = true;
-  pendingReceive = false;
-  for (const s of senders) {
-    s.blocked = true;
-    s.pendingChar = null;
-    ch.removeBlocked(s);
-    const els = senderButtonEls.get(s);
-    if (els) {
-      els.input.disabled = true;
-      els.input.value = '';
-    }
-  }
-  updateButtons();
 }
 
 // ---- legend (what means what) ----
@@ -455,10 +415,10 @@ function ensureLegend() {
   const el = document.createElement('div');
   el.id = 'legend';
   el.appendChild(row('30px', '#2e7d32', 'Sender (Tx) — type a char to send'));
+  el.appendChild(row('30px', '#9e9e9e', 'Sender blocked — channel full, cannot send'));
   el.appendChild(
-    row('30px', '#9e9e9e', 'Sender blocked — channel full (or receiver closed), cannot send'),
+    row('16px', '#000000', 'Receiver — receive() takes the oldest char out of the buffer'),
   );
-  el.appendChild(row('16px', '#000000', 'Receiver (single consumer)'));
   document.body.appendChild(el);
   legendEl = el;
 }
@@ -474,27 +434,23 @@ function updateHudPositions() {
   if (receiveBtn && dot) {
     const bw = receiveBtn.offsetWidth || 86;
     const bh = receiveBtn.offsetHeight || 36;
-    const ox = dot.x + collector.halfW * Math.cos(ANGLE);
-    const oy = dot.y + collector.halfH + collector.halfH * Math.sin(ANGLE);
-    receiveBtn.style.left = ox - bw / 2 + 'px';
-    receiveBtn.style.top = oy - bh / 2 + 'px';
-  }
-  if (closeBtn && dot) {
-    const bw = closeBtn.offsetWidth || 64;
-    const bh = closeBtn.offsetHeight || 30;
-    closeBtn.style.left = dot.x + DOT_R + 10 + 'px';
-    closeBtn.style.top = dot.y - bh / 2 + 'px';
+    receiveBtn.style.left = dot.x - DOT_R - bw - 8 + 'px';
+    receiveBtn.style.top = dot.y - bh / 2 + 'px';
+    if (lastReceivedEl) {
+      const lw = lastReceivedEl.offsetWidth || 32;
+      lastReceivedEl.style.height = bh + 'px';
+      lastReceivedEl.style.left = dot.x - DOT_R - bw - 8 - lw - 6 + 'px';
+      lastReceivedEl.style.top = dot.y - bh / 2 + 'px';
+    }
   }
 }
 
 function updateButtons() {
   createBtn.disabled = phase !== 'idle';
-  spawnBtn.disabled = !(phase === 'active' && actor === null && senders.length > 0);
   if (receiveBtn) {
     receiveBtn.disabled = false;
     receiveBtn.classList.toggle('waiting', pendingReceive);
   }
-  if (closeBtn) closeBtn.disabled = phase !== 'active' || closed || !dot;
   updateHudPositions();
 }
 
@@ -502,7 +458,7 @@ function updateButtons() {
 function animateDespawn() {
   flights.length = 0;
   inFlightReceives = 0;
-  if (!actor) {
+  if (!dot) {
     doDespawn();
     return;
   }
@@ -510,9 +466,9 @@ function animateDespawn() {
     DESPAWN_MS,
     (t) => {
       const q = Anim.easeInOut(t);
-      actor.scale = 1 - q;
       dot.scale = Math.max(0, 1 - q);
       if (receiveBtn) receiveBtn.style.opacity = String(1 - q);
+      if (lastReceivedEl) lastReceivedEl.style.opacity = String(1 - q);
     },
     doDespawn,
   );
@@ -526,20 +482,18 @@ function doDespawn() {
     receiveBtn.remove();
     receiveBtn = null;
   }
-  if (closeBtn) {
-    closeBtn.style.opacity = '1';
-    closeBtn.remove();
-    closeBtn = null;
+  if (lastReceivedEl) {
+    lastReceivedEl.style.opacity = '1';
+    lastReceivedEl.remove();
+    lastReceivedEl = null;
   }
   if (legendEl) {
     legendEl.remove();
     legendEl = null;
   }
-  actor = null;
   dot = null;
   senders = [];
   received = [];
-  closed = false;
   pendingReceive = false;
   ch.reset();
   inFlightReceives = 0;
@@ -560,10 +514,6 @@ function placeNextTo(s) {
     { x: s.x, y: s.y - d },
   ][idx % 4];
   return { x: clamp(cand.x, 90, W - 90), y: clamp(cand.y, 90, (H * 2) / 3) };
-}
-
-function spawnActorPos(d) {
-  return collector.center(d.x, d.y);
 }
 
 function clamp(v, lo, hi) {
@@ -618,44 +568,47 @@ function drawSender(s) {
   ctx.fillText('Tx', s.x, s.y);
 }
 
+// buffer strip pinned below the receiver dot
+function drawBuffer() {
+  // while a receive flight is airborne the source slot's char rides on the
+  // badge — never two instances of the same char visible at once
+  const shown = inFlightReceives > 0 ? ch.items.slice(1) : ch.items;
+  const y = dot.y + BUFF_DY;
+  for (let i = 0; i < CAP; i++) {
+    const p = slotXY(i);
+    const filled = i < shown.length;
+    ctx.strokeStyle = filled ? '#333' : '#bbb';
+    ctx.lineWidth = filled ? 2.5 : 1.5;
+    ctx.fillStyle = 'rgba(255,255,255,0.75)';
+    ctx.beginPath();
+    ctx.roundRect(p.x - SLOT_W / 2, y - SLOT_H / 2, SLOT_W, SLOT_H, 4);
+    ctx.fill();
+    ctx.stroke();
+    if (filled) {
+      ctx.fillStyle = '#000';
+      ctx.font = 'bold 14px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(shown[i], p.x, p.y);
+    }
+  }
+  ctx.fillStyle = '#444';
+  ctx.font = '600 12px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillText('buffer, capacity ' + CAP, dot.x, y + SLOT_H + 14);
+}
+
 function draw() {
-  ctx.fillStyle = BG;
-  ctx.fillRect(0, 0, W, H);
-  ctx.strokeStyle = 'rgba(235,91,32,0.10)';
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  for (let x = 0; x < W; x += 40) {
-    ctx.moveTo(x, 0);
-    ctx.lineTo(x, H);
-  }
-  for (let y = 0; y < H; y += 40) {
-    ctx.moveTo(0, y);
-    ctx.lineTo(W, y);
-  }
-  ctx.stroke();
+  ctx.clearRect(0, 0, W, H); // transparent canvas — the grid/background comes from live.css
 
   if (dot) {
     // arrows first (behind everything)
     for (const s of senders) drawArrow(s.x, s.y, dot.x, dot.y);
-    // while a receive flight is airborne the source slot's char rides on the
-    // badge — never two instances of the same char visible at once
-    const shown = inFlightReceives > 0 ? ch.items.slice(1) : ch.items;
-    // collector actor (oval + interior) via the component — appears on "Spawn Actor"
-    if (actor) {
-      collector.draw(ctx, {
-        x: dot.x,
-        y: dot.y,
-        scale: actor.scale,
-        items: shown,
-        received,
-      });
-    } else {
-      // buffer region always exists — the channel is there even before the actor
-      collector.drawBufferOnly(ctx, { x: dot.x, y: dot.y, items: shown });
-    }
-    // receiver dot on top of the oval's top point
+    drawBuffer();
+    // receiver dot on top
     const dr = DOT_R * (dot.scale || 1);
-    ctx.fillStyle = closed ? '#666' : '#000';
+    ctx.fillStyle = '#000';
     ctx.beginPath();
     ctx.arc(dot.x, dot.y, dr, 0, TAU);
     ctx.fill();
@@ -672,8 +625,6 @@ function draw() {
 
 // ---- input ----
 function hitObject(mx, my) {
-  if (actor && Math.hypot(mx - actor.x, my - actor.y) < collector.halfW + 5)
-    return { type: 'actor' };
   if (dot && Math.hypot(mx - dot.x, my - dot.y) < DOT_R + 5) return { type: 'dot' };
   for (let i = 0; i < senders.length; i++) {
     if (Math.hypot(mx - senders[i].x, my - senders[i].y) < SEND_R + 5)
@@ -687,8 +638,7 @@ c.addEventListener('mousedown', (e) => {
     my = e.clientY;
   const obj = hitObject(mx, my);
   if (obj) {
-    if (obj.type === 'actor') drag = { type: 'actor', offX: mx - actor.x, offY: my - actor.y };
-    else if (obj.type === 'dot') drag = { type: 'dot', offX: mx - dot.x, offY: my - dot.y };
+    if (obj.type === 'dot') drag = { type: 'dot', offX: mx - dot.x, offY: my - dot.y };
     else
       drag = {
         type: 'sender',
@@ -703,18 +653,9 @@ c.addEventListener('mousemove', (e) => {
   if (!drag) return;
   const mx = e.clientX,
     my = e.clientY;
-  if (drag.type === 'actor') {
-    actor.x = mx - drag.offX;
-    actor.y = my - drag.offY;
-    dot.x = actor.x;
-    dot.y = actor.y - collector.halfH;
-  } else if (drag.type === 'dot') {
+  if (drag.type === 'dot') {
     dot.x = mx - drag.offX;
     dot.y = my - drag.offY;
-    if (actor) {
-      actor.x = dot.x;
-      actor.y = dot.y + collector.halfH;
-    }
   } else {
     senders[drag.idx].x = mx - drag.offX;
     senders[drag.idx].y = my - drag.offY;

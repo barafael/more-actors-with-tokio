@@ -1,0 +1,36 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>recipe</title>
+<meta name="game-mode" content="local">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bitter:ital@0;1&amp;family=Fira+Mono&amp;display=swap">
+<link rel="stylesheet" href="main.css">
+<script>window.hydrate_queue=[];window.dx_hydrate=(id,data,debug_types,debug_locations)=>{let decoded=atob(data),bytes=Uint8Array.from(decoded,(c)=>c.charCodeAt(0));if(window.hydration_callback)window.hydration_callback(id,bytes,debug_types,debug_locations);else window.hydrate_queue.push([id,bytes,debug_types,debug_locations])};</script>
+</head>
+<body>
+<div id="main">
+<!--placeholder0--><!--placeholder1--><!--placeholder2--><div class="topbar" data-node-hydration="3"></div><div class="slide" data-node-hydration="4"><h2>The actor recipe</h2><pre class="code" data-node-hydration="5"><span style="color:#a71d5d;font-weight:bold">struct</span><span style="color:#323232"> </span><span style="color:#323232">ButtonService</span><span style="color:#323232"> </span><span style="color:#323232">{</span><span style="color:#323232">
+</span><span style="color:#323232">    </span><span style="color:#323232">pressed</span><span style="color:#323232">:</span><span style="color:#323232"> </span><span style="color:#323232">Option</span><span style="color:#323232">&lt;</span><span style="color:#323232">Color</span><span style="color:#323232">&gt;</span><span style="color:#323232">,
+</span><span style="color:#323232">}</span><span style="color:#323232">
+</span><span style="color:#323232">
+</span><span style="color:#a71d5d;font-weight:bold">impl</span><span style="color:#323232"> </span><span style="color:#323232">ButtonService</span><span style="color:#323232"> </span><span style="color:#323232">{</span><span style="color:#323232">
+</span><span style="color:#323232">    </span><span style="color:#a71d5d;font-weight:bold">pub</span><span style="color:#323232"> async </span><span style="color:#a71d5d;font-weight:bold">fn</span><span style="color:#323232"> </span><span style="color:#795da3;font-weight:bold">event_loop</span><span style="color:#323232">(</span><span style="color:#323232">
+</span><span style="color:#323232">        </span><span style="color:#a71d5d;font-weight:bold">mut</span><span style="color:#323232"> </span><span style="color:#323232">self</span><span style="color:#323232">,
+</span><span style="color:#323232">        </span><span style="color:#a71d5d;font-weight:bold">mut</span><span style="color:#323232"> </span><span style="color:#323232">rx</span><span style="color:#323232">:</span><span style="color:#323232"> </span><span style="color:#323232">mpsc</span><span style="color:#323232">::</span><span style="color:#323232">Receiver</span><span style="color:#323232">&lt;</span><span style="color:#323232">ButtonMsg</span><span style="color:#323232">&gt;</span><span style="color:#323232">,
+</span><span style="color:#323232">        </span><span style="color:#323232">token</span><span style="color:#323232">:</span><span style="color:#323232"> CancellationToken,
+</span><span style="color:#323232">    </span><span style="color:#323232">)</span><span style="color:#323232"> </span><span style="color:#323232">-&gt;</span><span style="color:#323232"> </span><span style="color:#a71d5d;font-weight:bold">Self</span><span style="color:#323232"> </span><span style="color:#323232">{</span><span style="color:#323232">
+</span><span style="color:#323232">        </span><span style="color:#a71d5d;font-weight:bold">loop</span><span style="color:#323232"> </span><span style="color:#323232">{</span><span style="color:#323232">
+</span><span style="color:#323232">            </span><span style="color:#323232">tokio</span><span style="color:#323232">::</span><span style="color:#323232">select</span><span style="color:#a71d5d;font-weight:bold">!</span><span style="color:#323232"> </span><span style="color:#323232">{</span><span style="color:#323232">
+</span><span style="color:#323232">                msg </span><span style="color:#a71d5d;font-weight:bold">=</span><span style="color:#323232"> rx.</span><span style="color:#62a35c">recv</span><span style="color:#323232">(</span><span style="color:#323232">)</span><span style="color:#323232"> </span><span style="color:#a71d5d;font-weight:bold">=&gt;</span><span style="color:#323232"> </span><span style="color:#a71d5d;font-weight:bold">match</span><span style="color:#323232"> msg </span><span style="color:#323232">{</span><span style="color:#323232"> </span><span style="color:#969896;font-style:italic">/*</span><span style="color:#969896;font-style:italic"> ... </span><span style="color:#969896;font-style:italic">*/</span><span style="color:#323232"> </span><span style="color:#323232">}</span><span style="color:#323232">,</span><span style="color:#323232">
+</span><span style="color:#323232">                </span><span style="color:#a71d5d;font-weight:bold">_</span><span style="color:#323232"> </span><span style="color:#a71d5d;font-weight:bold">=</span><span style="color:#323232"> token.</span><span style="color:#62a35c">cancelled</span><span style="color:#323232">(</span><span style="color:#323232">)</span><span style="color:#323232"> </span><span style="color:#a71d5d;font-weight:bold">=&gt;</span><span style="color:#323232"> </span><span style="color:#a71d5d;font-weight:bold">break</span><span style="color:#323232">,</span><span style="color:#323232">
+</span><span style="color:#323232">            </span><span style="color:#323232">}</span><span style="color:#323232">
+</span><span style="color:#323232">        </span><span style="color:#323232">}</span><span style="color:#323232">
+</span><span style="color:#323232">        </span><span style="color:#323232">self</span><span style="color:#323232">
+</span><span style="color:#323232">    </span><span style="color:#323232">}</span><span style="color:#323232">
+</span><span style="color:#323232">}</span></pre></div><div class="chrome desktop-only" data-node-hydration="6"><button class="nav" data-node-hydration="7,click:1">←</button><span class="counter"><!--node-id8-->5 / 6<!--#--></span><button class="nav" data-node-hydration="9,click:1">→</button></div>
+</div>
+<script>window.initial_dioxus_hydration_data="hoEY9vb2gRj1gRj1gRj1";window.initial_dioxus_hydration_debug_types=[];window.initial_dioxus_hydration_debug_locations=[];</script>
+<script type="module" src="./wasm/more-actors-with-tokio.js"></script>
+</body>
+</html>

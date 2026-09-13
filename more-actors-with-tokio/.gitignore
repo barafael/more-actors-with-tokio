@@ -1,0 +1,6 @@
+# Rust build artifacts
+/target
+
+# Generated static export: html + main.css are kept, bundles are huge
+/export/wasm
+/export/assets

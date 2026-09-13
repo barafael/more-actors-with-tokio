@@ -22,7 +22,6 @@ const ctx = c.getContext('2d');
 const toolbar = document.getElementById('toolbar');
 const sideOverlay = document.getElementById('side-overlay');
 
-const BG = '#fff8e1';
 const TAU = Math.PI * 2;
 const TX_R = 38;
 const RX_R = 38;
@@ -58,10 +57,12 @@ let txWrap = null,
 // ---- canvas / viewport ----
 let W, H;
 function resize() {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2); // render crisp on scaled displays
   W = window.innerWidth;
   H = window.innerHeight;
-  c.width = W;
-  c.height = H;
+  c.width = Math.round(W * dpr);
+  c.height = Math.round(H * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0); // keep drawing in CSS-pixel units
   updateHudPositions();
 }
 window.addEventListener('resize', resize);
@@ -402,6 +403,39 @@ function updateButtons() {
   updateHudPositions();
 }
 
+// ---- drag ----
+let drag = null; // {o: tx|state|rx} current drag target
+c.addEventListener('mousedown', (e) => {
+  if (phase !== 'active') return;
+  const mx = e.clientX,
+    my = e.clientY;
+  if (tx && Math.hypot(mx - tx.x, my - tx.y) < TX_R + 8) {
+    drag = { o: tx };
+  } else if (state) {
+    const dx = (mx - state.x) / STATE_HALFW,
+      dy = (my - state.y) / STATE_HALFH;
+    if (dx * dx + dy * dy < 1.3) {
+      drag = { o: state };
+    } else {
+      for (const rx of [...rxs].reverse()) {
+        if (Math.hypot(mx - rx.x, my - rx.y) < RX_R + 8) {
+          drag = { o: rx };
+          break;
+        }
+      }
+    }
+  }
+});
+c.addEventListener('mousemove', (e) => {
+  if (!drag) return;
+  drag.o.x = e.clientX;
+  drag.o.y = e.clientY;
+  updateHudPositions();
+});
+c.addEventListener('mouseup', () => {
+  drag = null;
+});
+
 // ---- draw ----
 function drawCircle(obj, r, fill, border, label, textColor) {
   const rr = r * (obj.scale || 1);
@@ -524,20 +558,7 @@ function drawFlights() {
 }
 
 function draw() {
-  ctx.fillStyle = BG;
-  ctx.fillRect(0, 0, W, H);
-  ctx.strokeStyle = 'rgba(235,91,32,0.10)';
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  for (let x = 0; x < W; x += 40) {
-    ctx.moveTo(x, 0);
-    ctx.lineTo(x, H);
-  }
-  for (let y = 0; y < H; y += 40) {
-    ctx.moveTo(0, y);
-    ctx.lineTo(W, y);
-  }
-  ctx.stroke();
+  ctx.clearRect(0, 0, W, H); // transparent canvas — the grid/background comes from live.css
 
   drawState();
   drawArrows();

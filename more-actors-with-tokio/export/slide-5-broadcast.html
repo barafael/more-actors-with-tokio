@@ -1,0 +1,18 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>broadcast</title>
+<meta name="game-mode" content="local">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bitter:ital@0;1&amp;family=Fira+Mono&amp;display=swap">
+<link rel="stylesheet" href="main.css">
+<script>window.hydrate_queue=[];window.dx_hydrate=(id,data,debug_types,debug_locations)=>{let decoded=atob(data),bytes=Uint8Array.from(decoded,(c)=>c.charCodeAt(0));if(window.hydration_callback)window.hydration_callback(id,bytes,debug_types,debug_locations);else window.hydrate_queue.push([id,bytes,debug_types,debug_locations])};</script>
+</head>
+<body>
+<div id="main">
+<!--placeholder0--><!--placeholder1--><!--placeholder2--><div class="topbar" data-node-hydration="3"></div><div class="slide" data-node-hydration="4"><h2>The broadcast channel</h2><p class="dim">Sending never blocks: a full buffer evicts its oldest value. Fall behind and your next receive yields Lagged(n).</p><div class="diagram" data-node-hydration="5"><div class="game-header">broadcast</div><div class="status"><!--node-id6-->single-player<!--#--></div><!--placeholder7--><div data-node-hydration="8"><div class="actor sender-node host" style="top: 23.6%; height: 46.8%; left: 3%; width: 13%;" title="host seed sender" data-node-hydration="9"><!--node-id10-->host<!--#--></div><div class="sender-btns" style="top: 71.4%; left: 3%; width: 13%;" data-node-hydration="11"><button class="btn small" title="subscribe a receiver via this sender (one per client)" data-node-hydration="12,click:1">subscribe</button><button class="btn small clone" title="clone this sender — the clone is yours" data-node-hydration="13,click:1">clone</button><input class="field" maxlength=1 value="" data-node-hydration="14,input:1"/><button class="btn send" data-node-hydration="15,click:1">send</button></div></div><div class="buffer-label" data-node-hydration="16">channel buffer</div><div class="actor buf-slot" style="left: 39%; width: 4.6%;" data-node-hydration="17"></div><div class="actor buf-slot" style="left: 44.8%; width: 4.6%;" data-node-hydration="18"></div><div class="actor buf-slot" style="left: 50.6%; width: 4.6%;" data-node-hydration="19"></div><div class="actor buf-slot" style="left: 56.4%; width: 4.6%;" data-node-hydration="20"></div><div class="actor buf-slot" style="left: 62.2%; width: 4.6%;" data-node-hydration="21"></div><div class="buffer-oldest" style="left: 39%;" data-node-hydration="22">oldest</div><div class="buffer-newest" style="left: 62.2%;" data-node-hydration="23">newest</div><div class="buffer-tail" style="left: 39%;" data-node-hydration="24">next →</div><!--placeholder25--><svg class="arrow-layer" data-node-hydration="26"><!--placeholder27--></svg><!--placeholder28--><div class="game-footer"><span class="note-pill occupancy"><!--node-id29-->buffer 0 / 5<!--#--></span><!--placeholder30--><!--placeholder31--><button class="btn desktop-only" data-node-hydration="32,click:1">restart</button></div></div></div><div class="chrome desktop-only" data-node-hydration="33"><button class="nav" data-node-hydration="34,click:1">←</button><span class="counter"><!--node-id35-->6 / 6<!--#--></span><button class="nav" data-node-hydration="36,click:1">→</button></div>
+</div>
+<script>window.initial_dioxus_hydration_data="hoEY9vb2gRj1gRj1gRj1";window.initial_dioxus_hydration_debug_types=[];window.initial_dioxus_hydration_debug_locations=[];</script>
+<script type="module" src="./wasm/more-actors-with-tokio.js"></script>
+</body>
+</html>

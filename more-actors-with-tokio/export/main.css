@@ -1,0 +1,1023 @@
+/* main.css — marp rhea/gaia visual language + JS-minigame primitives */
+
+:root {
+    --color-foreground: #333;
+    --color-highlight: #eb5b20;
+    --color-dimmed: #6b6b6b;
+    --color-background: #fff8e1;
+    --color-red: #d32f2f;
+    --color-green: #2e7d32;
+    --color-blue: #1976d2;
+    --ink: #333;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+html {
+    /* marp gaia: 35px base on a 720px-tall slide */
+    font-size: clamp(14px, 4.861vh, 40px);
+}
+
+body {
+    margin: 0;
+    background: var(--color-background);
+    color: var(--color-foreground);
+    font-family: 'Bitter', sans-serif;
+    line-height: 1.35;
+    letter-spacing: 0.036em;
+}
+
+/* marp header: 3% orange bar */
+.topbar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3%;
+    min-height: 8px;
+    background: var(--color-highlight);
+    z-index: 30;
+}
+
+/* ---- slide = marp section ---- */
+
+.slide {
+    min-height: 100dvh;
+    padding: 8vh 5.47vw 10vh;
+    overflow: hidden;
+    background-color: var(--color-background);
+    background-image: linear-gradient(135deg, hsla(0, 0%, 53%, 0), hsla(0, 0%, 53%, 0.02) 50%, hsla(0, 0%, 100%, 0) 0, hsla(0, 0%, 100%, 0.05));
+}
+
+.slide.lead {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+}
+
+.slide.lead h1,
+.slide.lead h2,
+.slide.lead p {
+    text-align: center;
+}
+
+h1,
+h2,
+h3 {
+    font-family: 'Bitter', sans-serif;
+    margin: 0.5em 0 0;
+}
+
+.slide> :first-child,
+.slide>header:first-child+* {
+    margin-top: 0;
+}
+
+h1 {
+    font-size: 1.8em;
+}
+
+h2 {
+    font-size: 1.5em;
+}
+
+h3 {
+    font-size: 1.3em;
+}
+
+p {
+    margin: 1em 0 0;
+}
+
+strong {
+    color: var(--color-highlight);
+}
+
+.dim {
+    color: var(--color-dimmed);
+}
+
+.code {
+    font-family: 'Fira Mono', monospace;
+    font-size: 0.62rem;
+    line-height: 1.35;
+    background: #fff;
+    border-radius: 6px;
+    padding: 0.9rem 1.2rem;
+    border: 1px solid #e8dfc0;
+    margin: 1em 0 0;
+}
+
+/* ---- chrome (presenter nav) ---- */
+
+.chrome {
+    position: fixed;
+    bottom: 14px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 6px 14px;
+    background: rgba(0, 0, 0, 0.65);
+    border-radius: 999px;
+    z-index: 30;
+}
+
+.chrome button {
+    background: transparent;
+    border: none;
+    color: #fff;
+    font-size: 0.9rem;
+    padding: 0.2rem 0.5rem;
+    box-shadow: none;
+}
+
+.chrome button:hover {
+    color: var(--color-highlight);
+}
+
+.counter {
+    color: #fff;
+    opacity: 0.85;
+}
+
+.counter {
+    font-family: 'Fira Mono', monospace;
+    min-width: 5rem;
+    text-align: center;
+}
+
+@media (max-width: 700px) {
+    .desktop-only {
+        display: none;
+    }
+}
+
+/* ---- minigame primitives (from lib/live.css) ---- */
+
+.diagram {
+    position: relative;
+    margin-top: 0.6rem;
+    border: 2px solid rgba(51, 51, 51, 0.25);
+    border-radius: 8px;
+    height: 52vh;
+    min-height: 300px;
+    container-type: size;
+    background-color: var(--color-background);
+    background-image:
+        linear-gradient(to right, rgba(235, 91, 32, 0.1) 1px, transparent 1.5px),
+        linear-gradient(to bottom, rgba(235, 91, 32, 0.1) 1px, transparent 1.5px);
+    background-size: 40px 40px;
+    overflow: hidden;
+}
+
+.game-header {
+    position: absolute;
+    top: 10px;
+    right: 14px;
+    z-index: 20;
+    font: 600 13px 'Fira Mono', monospace;
+    letter-spacing: 0.5px;
+    color: #999;
+    background: rgba(255, 248, 225, 0.75);
+    border: 1px solid rgba(51, 51, 51, 0.25);
+    padding: 5px 11px;
+    border-radius: 999px;
+    pointer-events: none;
+    user-select: none;
+}
+
+.status {
+    position: absolute;
+    top: 10px;
+    left: 14px;
+    z-index: 20;
+    font: 600 13px 'Fira Mono', monospace;
+    letter-spacing: 0.5px;
+    color: #999;
+    background: rgba(255, 248, 225, 0.75);
+    border: 1px solid rgba(51, 51, 51, 0.25);
+    padding: 5px 11px;
+    border-radius: 999px;
+    pointer-events: none;
+}
+
+/* circle actors */
+
+.actor {
+    position: absolute;
+    border: 2px solid var(--ink);
+    border-radius: 10px;
+    background: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: 'Fira Mono', monospace;
+    font-weight: bold;
+    font-size: 1.3rem;
+    z-index: 5;
+}
+
+/* mpsc: each sender handle is a node in a shrinking vertical list; its color
+   (Tableau 10 palette) drives the node, its arrow, flights and buffer chars */
+
+.sender-node {
+    left: 18%;
+    width: 13%;
+    background: var(--c, var(--color-green));
+    color: var(--fg, #fff);
+    transition: background-color 0.3s ease;
+}
+
+.sender-node.blocked {
+    background: #9e9e9e;
+    --fg: #fff;
+    border-style: dashed;
+}
+
+/* one input + send per owned sender, left of its rectangle */
+
+.sender-ctl {
+    position: absolute;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    transform: translateY(-50%);
+    z-index: 10;
+}
+
+.arrow-layer {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 4;
+    pointer-events: none;
+}
+
+.actor.receiver {
+    width: 4.6rem;
+    height: 3.2rem;
+    background: #4a4a4a;
+    border-color: #cfcfcf;
+    flex-direction: column;
+}
+
+.actor.receiver .count {
+    font-size: 1.5rem;
+    line-height: 1;
+    color: #fff;
+}
+
+.actor.receiver .count-caption {
+    font-size: 0.5rem;
+    font-weight: normal;
+    letter-spacing: 0.05em;
+    color: #cfcfcf;
+}
+
+.actor.receiver.waiting {
+    background: #9e9e9e;
+    border-color: #777;
+    animation: receiver-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes receiver-pulse {
+    0%,
+    100% {
+        opacity: 0.7;
+    }
+    50% {
+        opacity: 1;
+    }
+}
+
+/* buttons (live.css .btn) */
+
+.btn {
+    padding: 8px 14px;
+    font-size: 14px;
+    font-weight: 600;
+    font-family: sans-serif;
+    border: 2px solid #333;
+    border-radius: 8px;
+    background: #e8e8e8;
+    color: #333;
+    cursor: pointer;
+    white-space: nowrap;
+    user-select: none;
+}
+
+.btn:active {
+    background: #d8d8d8;
+}
+
+.btn:disabled {
+    border-color: #aaa;
+    background: #f0f0f0;
+    color: #999;
+    cursor: default;
+}
+
+.btn.rcv {
+    border-color: #4a4a4a;
+    background: #cfcfcf;
+}
+
+.btn.clone {
+    border-color: #1b5e20;
+    background: var(--color-green);
+    color: #fff;
+}
+
+.btn.await {
+    border-color: #e8590c;
+    background: #f08c00;
+    color: #fff;
+}
+
+/* pill labels */
+
+.recv-label {
+    padding: 4px 10px;
+    border: 2px solid #333;
+    border-radius: 8px;
+    background: #fff;
+    font: bold 20px sans-serif;
+    color: #000;
+    white-space: nowrap;
+    z-index: 10;
+}
+
+.note-pill {
+    padding: 4px 10px;
+    border: 2px dashed #999;
+    border-radius: 8px;
+    background: rgba(255, 248, 225, 0.9);
+    font: bold 14px sans-serif;
+    color: var(--color-dimmed);
+    white-space: nowrap;
+}
+
+.note-pill.waiting {
+    color: #e8590c;
+    border-color: #e8590c;
+}
+
+.note-pill.blocked {
+    border-style: solid;
+}
+
+/* owned-sender controls compact on phones, so they fit left of the nodes */
+
+@media (max-width: 700px) {
+    .sender-node {
+        left: 24%;
+    }
+
+    .sender-ctl {
+        gap: 2px;
+        transform: translateY(-50%) scale(0.85);
+        transform-origin: right center;
+    }
+}
+
+.side-btns {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.side-btns .field,
+.sender-ctl .field,
+.tx-ctl .field {
+    width: 26px;
+    height: 26px;
+    text-align: center;
+    font-size: 14px;
+    border: 2px solid #333;
+    border-radius: 6px;
+    padding: 0;
+    font-family: 'Fira Mono', monospace;
+    background: #fff;
+    color: #333;
+}
+
+/* receiver group: dot on top, buffer below it, receive row under that */
+
+.receiver-group {
+    position: absolute;
+    right: 16%;
+    top: 24%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    z-index: 5;
+}
+
+.receiver-group .actor {
+    position: static;
+}
+
+.buffer {
+    display: flex;
+    gap: 6px;
+}
+
+.slot {
+    width: 44px;
+    height: 44px;
+    border: 2px solid #333;
+    border-radius: 8px;
+    background: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font: bold 24px 'Fira Mono', monospace;
+    color: #000;
+}
+
+.slot.filled {
+    box-shadow: inset 0 0 0 2px var(--color-highlight);
+}
+
+.recv-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+/* flights: values travelling along the arrow, tinted by sender color */
+
+.flight {
+    position: absolute;
+    z-index: 15;
+    left: 17.5%;
+    top: var(--fy, 36%);
+    font: bold 1.4rem 'Fira Mono', monospace;
+    pointer-events: none;
+    text-shadow: 0 0 3px #fff;
+    animation: fly-to-receiver 0.7s linear forwards;
+}
+
+@keyframes fly-to-receiver {
+    from {
+        left: 17.5%;
+        top: var(--fy, 36%);
+    }
+    to {
+        left: 81%;
+        top: 36%;
+    }
+}
+
+/* button-future game: future as a dot */
+
+.future-pad {
+    position: absolute;
+    left: 50%;
+    top: 36%;
+    transform: translate(-50%, -50%);
+    width: 6.5rem;
+    height: 4.2rem;
+    border-radius: 10px;
+    border: 3px dashed var(--color-dimmed);
+    background: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font: bold 0.85rem 'Fira Mono', monospace;
+    color: var(--color-dimmed);
+    transition:
+        left 0.6s ease,
+        transform 0.6s ease,
+        background-color 0.6s ease,
+        border-color 0.6s ease,
+        color 0.6s ease;
+}
+
+.future-pad.resolved {
+    left: 33%;
+    transform: translate(-50%, -50%) scale(0.55);
+    border-style: solid;
+    border-color: #9e9e9e;
+    background: #9e9e9e;
+    color: #fff;
+}
+
+.future-pad.pending {
+    border-style: solid;
+    border-color: var(--color-highlight);
+    color: var(--color-highlight);
+    animation: pulse 1.2s ease-in-out infinite;
+}
+
+/* the value the future resolved to, right of the consumed future */
+
+.result-pad {
+    position: absolute;
+    left: 62%;
+    top: 36%;
+    transform: translate(-50%, -50%);
+    width: 6.5rem;
+    height: 4.2rem;
+    border-radius: 10px;
+    border: 3px solid var(--ink);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font: bold 0.85rem 'Fira Mono', monospace;
+    color: #fff;
+    animation: pop-in 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+.result-pad.red {
+    background: var(--color-red);
+}
+
+.result-pad.green {
+    background: var(--color-green);
+}
+
+.result-pad.blue {
+    background: var(--color-blue);
+}
+
+@keyframes pop-in {
+    from {
+        transform: translate(-50%, -50%) scale(0.02);
+    }
+    to {
+        transform: translate(-50%, -50%) scale(1);
+    }
+}
+
+/* arrow from the consumed future to its value */
+
+.future-arrow {
+    position: absolute;
+    top: 36%;
+    left: calc(33% + 2rem);
+    width: calc(29% - 5.4rem);
+    height: 3px;
+    background: var(--ink);
+    transform: translateY(-50%);
+    animation: fade-in 0.3s ease 0.45s both;
+}
+
+.future-arrow::after {
+    content: '';
+    position: absolute;
+    right: -0.15rem;
+    top: 50%;
+    transform: translateY(-50%);
+    border-left: 0.5rem solid var(--ink);
+    border-top: 0.35rem solid transparent;
+    border-bottom: 0.35rem solid transparent;
+}
+
+@keyframes fade-in {
+    from {
+        opacity: 0;
+    }
+    to {
+        opacity: 1;
+    }
+}
+
+@keyframes pulse {
+    0%,
+    100% {
+        transform: translate(-50%, -50%) scale(0.92);
+        opacity: 0.7;
+    }
+    50% {
+        transform: translate(-50%, -50%) scale(1.06);
+        opacity: 1;
+    }
+}
+
+.press-pad {
+    width: 4.2rem;
+    height: 3.1rem;
+    border-radius: 10px;
+    border: 2px solid var(--ink);
+    cursor: pointer;
+}
+
+.press-pad:disabled {
+    opacity: 0.35;
+    cursor: default;
+}
+
+.press-pad.red {
+    background: var(--color-red);
+}
+
+.press-pad.green {
+    background: var(--color-green);
+}
+
+.press-pad.blue {
+    background: var(--color-blue);
+}
+
+.press-row {
+    position: absolute;
+    left: 50%;
+    bottom: 14%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 1.4rem;
+    z-index: 10;
+}
+
+.create-row {
+    position: absolute;
+    top: 46px;
+    left: 14px;
+    z-index: 10;
+}
+
+.game-footer {
+    position: absolute;
+    bottom: 10px;
+    left: 14px;
+    right: 14px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    z-index: 10;
+}
+
+/* ---- watch game: one fixed sender, a cell holding the value, receivers ---- */
+
+/* the sender node is the presenter's fixed handle */
+.tx-node {
+    top: 50%;
+    transform: translateY(-50%);
+    background: var(--color-highlight);
+    color: #fff;
+}
+
+.tx-node.blocked {
+    background: #9e9e9e;
+    border-style: dashed;
+    animation: tx-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes tx-pulse {
+    0%,
+    100% {
+        opacity: 0.7;
+    }
+    50% {
+        opacity: 1;
+    }
+}
+
+/* one input + send per presenter, left of the sender node */
+.tx-ctl {
+    position: absolute;
+    top: 50%;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    transform: translateY(-50%);
+    z-index: 10;
+}
+
+/* little channel box the value lives in */
+.watch-cell {
+    top: 50%;
+    transform: translateY(-50%);
+    flex-direction: column;
+    gap: 2px;
+    background: #4a4a4a;
+    border-color: #cfcfcf;
+    color: #fff;
+}
+
+.cell-val {
+    font-size: 1.5rem;
+    line-height: 1;
+}
+
+.cell-cap {
+    font-size: 0.5rem;
+    font-weight: normal;
+    letter-spacing: 0.05em;
+    color: #cfcfcf;
+}
+
+/* receivers: a vertical list, right-anchored, each tinted by its owner */
+.rx-node {
+    width: 12%;
+    background: var(--c, #4a4a4a);
+    color: var(--fg, #fff);
+    border-color: var(--ink);
+    transition: background-color 0.3s ease;
+}
+
+.rx-node.awaiting {
+    opacity: 0.5;
+    animation: rx-pulse 1.2s ease-in-out infinite;
+}
+
+.rx-node.borrowing {
+    border-color: #e8590c;
+    box-shadow: 0 0 0 2px #e8590c;
+    background: var(--c, #4a4a4a);
+}
+
+@keyframes rx-pulse {
+    0%,
+    100% {
+        opacity: 0.5;
+    }
+    50% {
+        opacity: 1;
+    }
+}
+
+/* per-receiver controls right of the node, compact buttons */
+.rx-ctl {
+    position: absolute;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 4px;
+    transform: translateY(-50%);
+    z-index: 10;
+}
+
+.btn.small {
+    font-size: 11px;
+    padding: 4px 8px;
+    border-width: 1px;
+    border-radius: 6px;
+}
+
+/* flight: a value leaving the cell for one receiver, or a grey borrow */
+.watch-flight {
+    position: absolute;
+    z-index: 15;
+    left: 41%;
+    top: 50%;
+    font: bold 1.4rem 'Fira Mono', monospace;
+    pointer-events: none;
+    text-shadow: 0 0 3px #fff;
+    animation: fly-to-rx 0.7s ease-in forwards;
+}
+
+.watch-flight.borrow {
+    color: #777;
+    animation-duration: 0.5s;
+}
+
+@keyframes fly-to-rx {
+    from {
+        left: 41%;
+        top: 50%;
+        opacity: 1;
+    }
+    to {
+        left: var(--to-x, 41%);
+        top: var(--to-y, 50%);
+        opacity: 0;
+    }
+}
+
+/* transient same/error/blocked badge over the diagram */
+.watch-badge {
+    position: absolute;
+    left: 50%;
+    top: 48%;
+    transform: translate(-50%, -50%);
+    z-index: 25;
+    border-style: solid;
+    border-color: var(--color-red);
+    color: var(--color-red);
+    background: #fff;
+    pointer-events: none;
+    animation: fade-in 0.3s ease;
+}
+
+@media (max-width: 700px) {
+    .rx-node {
+        width: 14%;
+    }
+
+    .rx-ctl {
+        gap: 2px;
+        transform: translateY(-50%) scale(0.85);
+        transform-origin: right center;
+    }
+
+    .tx-ctl {
+        gap: 2px;
+        transform: translateY(-50%) scale(0.85);
+        transform-origin: left center;
+    }
+
+    .watch-flight {
+        font-size: 1.1rem;
+    }
+}
+
+/* ---- broadcast: senders → ring buffer → receivers ---- */
+
+.sender-btns {
+    position: absolute;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    z-index: 10;
+}
+
+.btn.small {
+    padding: 3px 7px;
+    font-size: 11px;
+    border-width: 1.5px;
+    border-radius: 6px;
+}
+
+.buf-slot {
+    width: 3.4rem;
+    height: 3.4rem;
+    font-size: 1.2rem;
+}
+
+.buf-slot.filled {
+    background: #fff;
+    border-color: var(--c);
+    color: var(--c);
+    box-shadow: inset 0 0 0 2px var(--c);
+}
+
+.buf-slot:not(.filled) {
+    border-style: dashed;
+    opacity: 0.55;
+}
+
+.buffer-label,
+.buffer-oldest,
+.buffer-newest,
+.buffer-tail {
+    position: absolute;
+    font: 600 11px 'Fira Mono', monospace;
+    color: var(--color-dimmed);
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+}
+
+.buffer-label {
+    left: 39%;
+    top: 32%;
+}
+
+.buffer-oldest {
+    top: calc(46% + 2.4rem);
+}
+
+.buffer-newest {
+    top: calc(46% + 2.4rem);
+}
+
+.buffer-tail {
+    top: calc(46% + 3.6rem);
+    color: var(--color-highlight);
+}
+
+.rx-b-node {
+    position: absolute;
+    right: 4%;
+    width: 13%;
+    min-height: 4.6rem;
+    border: 2px solid var(--ink);
+    border-radius: 10px;
+    background: #4a4a4a;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    padding: 4px;
+    font-family: 'Fira Mono', monospace;
+    z-index: 5;
+}
+
+.rx-b-node .rx-name {
+    font-weight: bold;
+    color: #fff;
+    font-size: 0.8rem;
+}
+
+.rx-b-node .rx-last {
+    font: bold 1.2rem 'Fira Mono', monospace;
+    color: #fff;
+}
+
+.rx-b-node .rx-next {
+    font: 600 9px 'Fira Mono', monospace;
+    color: #cfcfcf;
+}
+
+.rx-b-node.waiting {
+    background: #9e9e9e;
+    animation: receiver-pulse 1.2s ease-in-out infinite;
+}
+
+.rx-b-node.closed {
+    opacity: 0.6;
+}
+
+.lag-badge {
+    font: bold 10px sans-serif;
+    background: var(--color-red);
+    color: #fff;
+    border-radius: 999px;
+    padding: 1px 7px;
+    margin-top: 2px;
+}
+
+.lag-badge.closed {
+    background: #333;
+}
+
+.lag-total {
+    font: 600 9px sans-serif;
+    color: #cfcfcf;
+}
+
+.rx-btns {
+    display: flex;
+    gap: 3px;
+    margin-top: 3px;
+}
+
+.broadcast-closed {
+    position: absolute;
+    left: 50%;
+    top: 62%;
+    transform: translateX(-50%);
+    border-style: solid;
+    border-color: var(--color-red);
+    color: var(--color-red);
+    z-index: 12;
+}
+
+.bcast-flight {
+    position: absolute;
+    z-index: 15;
+    left: var(--from-x);
+    top: var(--from-y);
+    font: bold 1.4rem 'Fira Mono', monospace;
+    pointer-events: none;
+    text-shadow: 0 0 3px #fff;
+    animation: bcast-fly 0.7s ease-in forwards;
+}
+
+@keyframes bcast-fly {
+    from {
+        left: var(--from-x);
+        top: var(--from-y);
+    }
+    to {
+        left: 41%;
+        top: 46%;
+        opacity: 0.85;
+    }
+}
+
+@media (max-width: 700px) {
+    .rx-b-node {
+        width: 16%;
+    }
+
+    .sender-btns {
+        gap: 2px;
+    }
+
+    .btn.small {
+        padding: 2px 5px;
+        font-size: 10px;
+    }
+
+    .bcast-flight {
+        font-size: 1.1rem;
+    }
+}
+
+.btn.send {
+    border-color: #1b5e20;
+    background: var(--color-green);
+    color: #fff;
+}

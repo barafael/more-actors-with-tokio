@@ -17,7 +17,6 @@ const ctx = c.getContext('2d');
 const toolbar = document.getElementById('toolbar');
 const sideOverlay = document.getElementById('side-overlay');
 
-const BG = '#fff8e1';
 const TAU = Math.PI * 2;
 const TX_R = 38;
 const RX_R = 38;
@@ -58,10 +57,12 @@ function usable() {
 // ---- canvas / viewport ----
 let W, H;
 function resize() {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2); // render crisp on scaled displays
   W = window.innerWidth;
   H = window.innerHeight;
-  c.width = W;
-  c.height = H;
+  c.width = Math.round(W * dpr);
+  c.height = Math.round(H * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0); // keep drawing in CSS-pixel units
   updateHudPositions();
 }
 window.addEventListener('resize', resize);
@@ -498,20 +499,7 @@ function drawFlights() {
 }
 
 function draw() {
-  ctx.fillStyle = BG;
-  ctx.fillRect(0, 0, W, H);
-  ctx.strokeStyle = 'rgba(235,91,32,0.10)';
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  for (let x = 0; x < W; x += 40) {
-    ctx.moveTo(x, 0);
-    ctx.lineTo(x, H);
-  }
-  for (let y = 0; y < H; y += 40) {
-    ctx.moveTo(0, y);
-    ctx.lineTo(W, y);
-  }
-  ctx.stroke();
+  ctx.clearRect(0, 0, W, H); // transparent canvas — the grid/background comes from live.css
 
   if (tx && rx) drawArrow();
   if (tx) drawCircle(tx, TX_R, tx.spent ? GRAY : TX_FILL, TX_BORDER, 'Tx');
