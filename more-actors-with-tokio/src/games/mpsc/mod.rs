@@ -1,7 +1,7 @@
 //! The mpsc minigame: every connected client is a `Sender<T>` handle drawn as
 //! a colored node, cloning creates extra handles for the presenter, values
 //! fly along the arrows, a full buffer blocks (gray) senders until a receive
-//! frees a slot and a random blocked sender is woken.
+//! frees a slot. Blocked senders wake in FIFO order, like tokio's.
 
 mod layout;
 mod state;
@@ -55,6 +55,16 @@ fn dispatch_local(mut sim: Signal<MpscSim>, chan: ChannelState, wire: MpscWire) 
     chan.set_snapshot(sim.read().snapshot());
 }
 
+/// Route a wire to the in-browser sim (single-player) or over the game
+/// socket. Every call site goes through here so the two modes cannot drift.
+fn dispatch(conn: GameConnection, sim: Signal<MpscSim>, chan: ChannelState, wire: MpscWire) {
+    if conn.is_local() {
+        dispatch_local(sim, chan, wire);
+    } else {
+        conn.send(&wire);
+    }
+}
+
 fn send_from(
     conn: GameConnection,
     sim: Signal<MpscSim>,
@@ -68,12 +78,7 @@ fn send_from(
         .find(|(c, _)| *c == sender)
         .map(|(_, ch)| *ch);
     if let Some(ch) = draft {
-        let wire = MpscWire::Send { conn: sender, ch };
-        if conn.is_local() {
-            dispatch_local(sim, chan, wire);
-        } else {
-            conn.send(&wire);
-        }
+        dispatch(conn, sim, chan, MpscWire::Send { conn: sender, ch });
         drafts.with_mut(|d| d.retain(|(c, _)| *c != sender));
     }
 }
@@ -235,13 +240,7 @@ pub fn MpscGame() -> Element {
             ReceiverPanel {
                 snapshot: chan.snap.read().clone(),
                 connected: conn.connected(),
-                onreceive: move |_| {
-                    if conn.is_local() {
-                        dispatch_local(sim, chan, MpscWire::Receive);
-                    } else {
-                        conn.send(&MpscWire::Receive);
-                    }
-                },
+                onreceive: move |_| dispatch(conn, sim, chan, MpscWire::Receive),
             }
 
             for view in controls() {
