@@ -507,6 +507,22 @@ impl<T> WatchCore<T> {
         self.readers
     }
 
+    /// Live receiver ids, ascending. Ids are 1-based and are recycled once a
+    /// receiver is dropped, so callers holding an id across a drop must
+    /// re-check it with [`WatchCore::contains`].
+    pub fn receiver_ids(&self) -> impl Iterator<Item = u64> + '_ {
+        self.receivers
+            .iter()
+            .enumerate()
+            .filter(|(_, rx)| rx.alive)
+            .map(|(index, _)| index as u64 + 1)
+    }
+
+    /// Values of the parked sends, in FIFO commit order.
+    pub fn pending_values(&self) -> impl Iterator<Item = &T> {
+        self.queue.iter().filter_map(|pending| pending.value.as_ref())
+    }
+
     /// Parked sends in queue order — the FIFO commit order.
     pub fn pending_waiters(&self) -> Vec<WaiterId> {
         self.queue.iter().map(|pending| pending.waiter).collect()
@@ -1059,6 +1075,30 @@ mod core_tests {
                 panic!("expected Blocked");
             }
         }
+    }
+
+    #[test]
+    fn receiver_ids_lists_live_receivers_ascending() {
+        let mut core = WatchCore::new('a');
+        let second = core.subscribe();
+        let third = core.subscribe();
+        assert_eq!(core.receiver_ids().collect::<Vec<_>>(), [1, second, third]);
+
+        core.drop_receiver(second);
+        assert_eq!(core.receiver_ids().collect::<Vec<_>>(), [1, third]);
+    }
+
+    #[test]
+    fn pending_values_lists_parked_sends_in_commit_order() {
+        let mut core = WatchCore::new('a');
+        core.begin_borrow();
+        let SendOffer::Blocked { .. } = core.send('x') else {
+            panic!("a borrow guard parks the send");
+        };
+        let SendOffer::Blocked { .. } = core.send('y') else {
+            panic!("a borrow guard parks the send");
+        };
+        assert_eq!(core.pending_values().collect::<Vec<_>>(), [&'x', &'y']);
     }
 }
 

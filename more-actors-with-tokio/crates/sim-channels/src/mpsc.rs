@@ -303,6 +303,23 @@ impl<T> MpscCore<T> {
         self.buffer.is_empty() && self.blocked.is_empty()
     }
 
+    /// Buffered values in accept order — the order `recv` will yield them.
+    pub fn buffer(&self) -> impl Iterator<Item = &T> {
+        self.buffer.iter()
+    }
+
+    /// Parked sends still waiting for capacity, in FIFO wake order, with the
+    /// value each one is holding. Sends already completed or failed while
+    /// parked are skipped: they are no longer queued for a slot.
+    pub fn blocked(&self) -> impl Iterator<Item = (WaiterId, &T)> {
+        self.blocked.iter().filter_map(|blocked| {
+            if blocked.state != BlockedState::Queued {
+                return None;
+            }
+            blocked.value.as_ref().map(|value| (blocked.waiter, value))
+        })
+    }
+
     /// Number of parked sends.
     pub fn blocked_len(&self) -> usize {
         self.blocked.len()
@@ -846,6 +863,37 @@ mod core_tests {
         }
         assert_eq!(core.len(), 5);
         assert_eq!(core.capacity(), usize::MAX);
+    }
+
+    #[test]
+    fn buffer_yields_values_in_accept_order() {
+        let mut core = MpscCore::new(4);
+        for ch in ['a', 'b', 'c'] {
+            assert_eq!(core.offer_send(ch), SendOffer::Accepted);
+        }
+        assert_eq!(core.buffer().copied().collect::<Vec<_>>(), ['a', 'b', 'c']);
+    }
+
+    #[test]
+    fn blocked_yields_parked_values_in_fifo_wake_order() {
+        let mut core = MpscCore::new(1);
+        assert_eq!(core.offer_send('a'), SendOffer::Accepted);
+        let SendOffer::Blocked { waiter: first } = core.offer_send('x') else {
+            panic!("full buffer parks the send");
+        };
+        let SendOffer::Blocked { waiter: second } = core.offer_send('y') else {
+            panic!("full buffer parks the send");
+        };
+
+        assert_eq!(
+            core.blocked().collect::<Vec<_>>(),
+            [(first, &'x'), (second, &'y')],
+            "queue order is wake order"
+        );
+
+        // freeing a slot wakes the head; it is no longer queued for capacity
+        assert_eq!(core.poll_recv(), RecvPoll::Value('a'));
+        assert_eq!(core.blocked().collect::<Vec<_>>(), [(second, &'y')]);
     }
 }
 

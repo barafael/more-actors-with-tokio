@@ -7,10 +7,14 @@ use std::sync::OnceLock;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
 
+use sim_channels::mpsc::{MpscCore, RecvPoll, SendOffer, SendPoll};
+use sim_channels::oneshot::OneshotCore;
+use sim_channels::WaiterId;
+
 use crate::protocol::{
     BroadcastError, BroadcastEvent, BroadcastSnapshot, BroadcastWire, BufferChar, ButtonEvent,
     ButtonState, ButtonWire, MpscEvent, MpscSnapshot, MpscWire, RxInfo, RxState, SenderInfo,
-    WatchEvent, WatchSnapshot, WatchWire, BROADCAST_CAPACITY, MPSC_CAPACITY,
+    Color, WatchEvent, WatchSnapshot, WatchWire, BROADCAST_CAPACITY, MPSC_CAPACITY,
 };
 
 /// Connection id used by the local (single-player) client.
@@ -33,7 +37,14 @@ pub fn now_ms() -> f64 {
     }
 }
 
+/// The button future: a `oneshot` channel whose value is the colour that
+/// resolved it. Activating creates the channel, pressing a button sends the
+/// one value it will ever carry.
+///
+/// `state` is a projection of the core for `ButtonState` consumers; the
+/// channel itself is the truth.
 pub struct ButtonSim {
+    pending: Option<OneshotCore<Color>>,
     pub state: ButtonState,
 }
 
@@ -46,6 +57,7 @@ impl Default for ButtonSim {
 impl ButtonSim {
     pub fn new() -> Self {
         Self {
+            pending: None,
             state: ButtonState::Idle,
         }
     }
@@ -56,56 +68,70 @@ impl ButtonSim {
             ButtonWire::Activate
                 if matches!(self.state, ButtonState::Idle | ButtonState::Ready(_)) =>
             {
+                self.pending = Some(OneshotCore::new());
                 self.state = ButtonState::Pending;
                 vec![ButtonEvent::Activated]
             }
-            ButtonWire::Press { color } if self.state == ButtonState::Pending => {
+            // one value moves exactly once: a second press finds the slot
+            // full and the send fails, leaving the resolved colour intact
+            ButtonWire::Press { color } => {
+                let Some(core) = self.pending.as_mut() else {
+                    return Vec::new();
+                };
+                if core.send(*color).is_err() {
+                    return Vec::new();
+                }
                 self.state = ButtonState::Ready(*color);
                 vec![ButtonEvent::Resolved { color: *color }]
             }
-            _ => Vec::new(),
+            ButtonWire::Activate => Vec::new(),
         }
     }
 }
 
 /// Bounded mpsc channel: live senders, buffered values, in-flight values and
-/// blocked senders. `flight_ms` is ~700 on the server actor (values fly to the
-/// receiver as an animation) and also nonzero for the single-player client.
-/// Unblock order among blocked senders is random, like competing woken tasks.
+/// blocked senders. Channel truth lives in [`MpscCore`]; this driver owns the
+/// sender registry, the flight clock and the protocol mapping.
 ///
-/// The sim keeps its own clock (`now`); drivers sync it with the wall clock
-/// (`sync_now`) while tests advance it deterministically (`advance`).
+/// A value is "in flight" while its animation plays. Flights already occupy
+/// channel capacity — the core buffers the value at send time and the flight
+/// is pure cosmetics on top — so a full channel blocks the next sender even
+/// while values are still mid-air, exactly as `Sender::send` would.
+///
+/// Blocked senders wake in FIFO order, like tokio's.
 pub struct MpscSim {
+    core: MpscCore<BufferChar>,
     senders: Vec<SenderInfo>,
-    buffer: VecDeque<BufferChar>,
-    in_flight: usize,
+    /// Parked sends, mapped back to the handle that issued them and the value
+    /// they carry (so a woken send can fly with the right char).
+    parked: Vec<(WaiterId, BufferChar)>,
+    /// Identity of the single consumer while it is parked in `recv()`.
+    waiting: Option<WaiterId>,
+    /// How many `recv()` calls are outstanding. The game lets the presenter
+    /// click Receive repeatedly; each click is a separate awaited recv, and
+    /// every one of them must eventually be served.
+    pending_receives: usize,
+    /// Values mid-animation: (due, conn, ch). Cosmetics only.
     landings: VecDeque<(f64, u64, char)>,
-    blocked: VecDeque<BufferChar>,
-    waiting_receive: bool,
+    in_flight: usize,
     last_received: Option<BufferChar>,
     flight_ms: f64,
     now: f64,
-    rng: u64,
 }
 
 impl MpscSim {
     pub fn new(flight_ms: f64) -> Self {
-        Self::with_seed(flight_ms, (now_ms() as u64) | 1)
-    }
-
-    /// Deterministic constructor for tests.
-    pub fn with_seed(flight_ms: f64, seed: u64) -> Self {
         Self {
+            core: MpscCore::new(MPSC_CAPACITY),
             senders: Vec::new(),
-            buffer: VecDeque::new(),
-            in_flight: 0,
+            parked: Vec::new(),
+            waiting: None,
+            pending_receives: 0,
             landings: VecDeque::new(),
-            blocked: VecDeque::new(),
-            waiting_receive: false,
+            in_flight: 0,
             last_received: None,
             flight_ms,
             now: 0.0,
-            rng: seed | 1,
         }
     }
 
@@ -118,20 +144,6 @@ impl MpscSim {
     /// Advance the sim clock (tests only).
     pub fn advance(&mut self, ms: f64) {
         self.now += ms;
-    }
-
-    fn occupancy(&self) -> usize {
-        self.buffer.len() + self.in_flight
-    }
-
-    /// xorshift64*, so the random unblock pick stays reproducible per seed.
-    fn rand(&mut self) -> u64 {
-        let mut x = self.rng;
-        x ^= x << 13;
-        x ^= x >> 7;
-        x ^= x << 17;
-        self.rng = x;
-        x
     }
 
     pub fn contains_sender(&self, conn: u64) -> bool {
@@ -149,18 +161,32 @@ impl MpscSim {
             owner,
             blocked: false,
         });
+        self.core.add_sender();
         vec![MpscEvent::SenderJoined { conn, owner }]
     }
 
     /// Dropping the handle: the client disconnects (clones die with their
-    /// owner's connection). Blocked sends queued by it are discarded.
+    /// owner's connection). Sends it had parked are cancelled, handing the
+    /// values back the way a dropped `Sender` would.
     pub fn remove_sender(&mut self, conn: u64) -> Vec<MpscEvent> {
         if !self.contains_sender(conn) {
             return Vec::new();
         }
         self.senders.retain(|s| s.conn != conn);
-        self.blocked.retain(|owned| owned.conn != conn);
-        vec![MpscEvent::SenderLeft { conn }]
+        let cancelled: Vec<WaiterId> = self
+            .parked
+            .iter()
+            .filter(|(_, value)| value.conn == conn)
+            .map(|(waiter, _)| *waiter)
+            .collect();
+        for waiter in cancelled {
+            self.core.cancel_send(waiter);
+            self.parked.retain(|(parked, _)| *parked != waiter);
+        }
+        self.core.drop_sender();
+        let mut events = vec![MpscEvent::SenderLeft { conn }];
+        events.extend(self.settle());
+        events
     }
 
     pub fn handle(&mut self, wire: &MpscWire, conn: u64) -> Vec<MpscEvent> {
@@ -170,37 +196,33 @@ impl MpscSim {
                 self.add_sender(*new_conn, conn)
             }
             MpscWire::Send { conn: sender, ch } if self.contains_sender(*sender) => {
-                if self.occupancy() < MPSC_CAPACITY {
-                    self.in_flight += 1;
-                    let due = self.now + self.flight_ms;
-                    self.landings.push_back((due, *sender, *ch));
-                    vec![MpscEvent::InFlight {
-                        conn: *sender,
-                        ch: *ch,
-                    }]
-                } else {
-                    self.senders
-                        .iter_mut()
-                        .filter(|s| s.conn == *sender)
-                        .for_each(|s| s.blocked = true);
-                    self.blocked.push_back(BufferChar {
-                        ch: *ch,
-                        conn: *sender,
-                    });
-                    Vec::new()
+                let value = BufferChar {
+                    ch: *ch,
+                    conn: *sender,
+                };
+                match self.core.offer_send(value) {
+                    SendOffer::Accepted => {
+                        self.take_off(*sender, *ch);
+                        vec![MpscEvent::InFlight {
+                            conn: *sender,
+                            ch: *ch,
+                        }]
+                    }
+                    SendOffer::Blocked { waiter } => {
+                        self.parked.push((waiter, value));
+                        self.set_blocked(*sender, true);
+                        Vec::new()
+                    }
+                    // the game never closes the channel
+                    SendOffer::Rejected(_) => Vec::new(),
                 }
             }
+            // Each click is one awaited `recv()`. Queuing them means a
+            // second receive on an empty channel is still owed a value
+            // instead of being swallowed by a single "waiting" flag.
             MpscWire::Receive => {
-                if let Some(owned) = self.buffer.pop_front() {
-                    self.last_received = Some(owned);
-                    self.unblock_one();
-                    Vec::new()
-                } else if !self.waiting_receive {
-                    self.waiting_receive = true;
-                    Vec::new()
-                } else {
-                    Vec::new()
-                }
+                self.pending_receives += 1;
+                self.settle()
             }
             _ => Vec::new(),
         }
@@ -213,7 +235,9 @@ impl MpscSim {
             .map(|(due, _, _)| (due - self.now).max(0.0))
     }
 
-    /// Land every flight whose deadline has passed.
+    /// Land every flight whose deadline has passed. Landing is cosmetic: the
+    /// value already sits in the channel, so this only ends the animation and
+    /// lets a waiting receiver pick the value up.
     pub fn poll_due(&mut self) -> Vec<MpscEvent> {
         let mut events = Vec::new();
         while self
@@ -223,44 +247,119 @@ impl MpscSim {
         {
             let (_, conn, ch) = self.landings.pop_front().expect("checked non-empty");
             self.in_flight -= 1;
-            if self.waiting_receive {
-                self.waiting_receive = false;
-                self.last_received = Some(BufferChar { ch, conn });
-            } else {
-                self.buffer.push_back(BufferChar { ch, conn });
-            }
             events.push(MpscEvent::Consumed { conn, ch });
+        }
+        if !events.is_empty() {
+            events.extend(self.settle());
         }
         events
     }
 
-    /// A woken blocked sender is picked at random, not FIFO.
-    fn unblock_one(&mut self) {
-        if self.blocked.is_empty() || self.occupancy() >= MPSC_CAPACITY {
-            return;
-        }
-        let idx = (self.rand() % self.blocked.len() as u64) as usize;
-        let woken = self.blocked.remove(idx).expect("checked non-empty");
-        if let Some(s) = self.senders.iter_mut().find(|s| s.conn == woken.conn) {
-            s.blocked = false;
-        }
+    /// Start a value's flight animation.
+    fn take_off(&mut self, conn: u64, ch: char) {
         self.in_flight += 1;
         let due = self.now + self.flight_ms;
-        self.landings.push_back((due, woken.conn, woken.ch));
+        self.landings.push_back((due, conn, ch));
+    }
+
+    fn set_blocked(&mut self, conn: u64, blocked: bool) {
+        for sender in self.senders.iter_mut().filter(|s| s.conn == conn) {
+            sender.blocked = blocked;
+        }
+    }
+
+    /// Re-check everything parked after a state change: woken sends take off,
+    /// and a receiver blocked on an empty channel takes the next value.
+    ///
+    /// The core wakes parked sends in FIFO order, so a value parked before
+    /// another always lands first.
+    fn settle(&mut self) -> Vec<MpscEvent> {
+        let mut events = Vec::new();
+        // Receives and parked sends feed each other: a served receive frees
+        // a slot, which wakes a parked send, whose value a later receive can
+        // take. Iterate until neither side moves.
+        loop {
+            self.drain_receives();
+            let woken = self.wake_parked_sends();
+            if woken.is_empty() {
+                break;
+            }
+            events.extend(woken);
+        }
+        events
+    }
+
+    /// Re-check parked sends. The core wakes them in FIFO order, so a value
+    /// parked before another always lands first.
+    fn wake_parked_sends(&mut self) -> Vec<MpscEvent> {
+        let mut events = Vec::new();
+        for (waiter, value) in self.parked.clone() {
+            let outcome = self.core.poll_send(waiter);
+            if matches!(outcome, SendPoll::Pending) {
+                continue;
+            }
+            self.parked.retain(|(parked, _)| *parked != waiter);
+            if !self.parked.iter().any(|(_, v)| v.conn == value.conn) {
+                self.set_blocked(value.conn, false);
+            }
+            // an accepted send flies like any other; the value is already in
+            // the buffer it will appear to land in
+            if matches!(outcome, SendPoll::Accepted) {
+                self.take_off(value.conn, value.ch);
+                events.push(MpscEvent::InFlight {
+                    conn: value.conn,
+                    ch: value.ch,
+                });
+            }
+        }
+        events
+    }
+
+    /// Serve as many outstanding `recv()` calls as there are values. The
+    /// consumer is single, so at most one can be parked in the core at a
+    /// time; the rest stay owed and are served as values arrive.
+    fn drain_receives(&mut self) {
+        while self.pending_receives > 0 {
+            let poll = match self.waiting {
+                Some(waiter) => self.core.poll_recv_wait(waiter),
+                None => self.core.poll_recv(),
+            };
+            match poll {
+                RecvPoll::Value(owned) => {
+                    self.waiting = None;
+                    self.pending_receives -= 1;
+                    self.last_received = Some(owned);
+                }
+                RecvPoll::Empty { waiter } => {
+                    self.waiting = Some(waiter);
+                    break;
+                }
+                RecvPoll::Disconnected => {
+                    self.waiting = None;
+                    self.pending_receives = 0;
+                    break;
+                }
+            }
+        }
     }
 
     pub fn snapshot(&self) -> MpscSnapshot {
+        // A value in flight already occupies a buffer slot in the core, but
+        // the UI draws it mid-air and adds `in_flight` to the buffer length
+        // for occupancy. Hide the newest `in_flight` values so a value is
+        // shown — and counted — exactly once.
+        let buffered: Vec<BufferChar> = self.core.buffer().copied().collect();
+        let settled = buffered.len().saturating_sub(self.in_flight);
         MpscSnapshot {
             senders: self.senders.clone(),
-            buffer: self.buffer.iter().copied().collect(),
-            blocked_sends: self.blocked.iter().copied().collect(),
+            buffer: buffered[..settled].to_vec(),
+            blocked_sends: self.core.blocked().map(|(_, value)| *value).collect(),
             in_flight: self.in_flight,
-            waiting_receive: self.waiting_receive,
+            waiting_receive: self.pending_receives > 0,
             last_received: self.last_received,
         }
     }
 }
-
 /// Late-config watch channel: ONE shared cell of state and a single fixed
 /// sender (the presenter), created with an initial value so receivers are born
 /// with a known `created` phase. Unlike mpsc there is no buffer and no clock:
@@ -824,7 +923,7 @@ mod tests {
     const CAP: usize = MPSC_CAPACITY;
 
     fn sim_with_two_senders() -> MpscSim {
-        let mut sim = MpscSim::with_seed(FLIGHT, 42);
+        let mut sim = MpscSim::new(FLIGHT);
         sim.add_sender(1, 1);
         sim.add_sender(2, 1);
         sim
@@ -887,7 +986,7 @@ mod tests {
     }
 
     #[test]
-    fn full_buffer_blocks_sender_until_receive_wakes_it_randomly() {
+    fn full_buffer_blocks_sender_until_a_receive_wakes_it() {
         let mut sim = sim_with_two_senders();
         for (i, ch) in ('a'..).take(CAP).enumerate() {
             let conn = if i % 2 == 0 { 1 } else { 2 };
@@ -905,8 +1004,7 @@ mod tests {
         assert_eq!(snap.blocked_sends, vec![BufferChar { ch: 'z', conn: 1 }]);
         assert!(snap.senders.iter().find(|s| s.conn == 1).unwrap().blocked);
 
-        // receive frees a slot and wakes exactly one blocked send (randomly
-        // picked, but deterministic under the seed)
+        // receive frees a slot and wakes exactly one blocked send
         let _ = receive(&mut sim);
         sim.advance(FLIGHT);
         let events = sim.poll_due();
@@ -920,33 +1018,43 @@ mod tests {
     }
 
     #[test]
-    fn unblock_wake_order_is_deterministic_per_seed() {
-        let outcomes: Vec<Vec<char>> = (0..2)
-            .map(|seed| {
-                let mut sim = MpscSim::with_seed(FLIGHT, seed + 1);
-                sim.add_sender(1, 1);
-                sim.add_sender(2, 1);
-                sim.add_sender(3, 1);
-                for i in 0..CAP {
-                    let ch = char::from_u32('a' as u32 + i as u32).unwrap();
-                    send(&mut sim, 1, ch);
+    fn unblock_wake_order_is_fifo() {
+        let mut sim = MpscSim::new(FLIGHT);
+        sim.add_sender(1, 1);
+        sim.add_sender(2, 1);
+        sim.add_sender(3, 1);
+        for i in 0..CAP {
+            let ch = char::from_u32('a' as u32 + i as u32).unwrap();
+            send(&mut sim, 1, ch);
+        }
+        sim.advance(FLIGHT);
+        let _ = sim.poll_due();
+
+        // two sends park, in this order
+        send(&mut sim, 2, 'x');
+        send(&mut sim, 3, 'y');
+        assert_eq!(
+            sim.snapshot()
+                .blocked_sends
+                .iter()
+                .map(|b| b.ch)
+                .collect::<Vec<_>>(),
+            ['x', 'y'],
+        );
+
+        // tokio wakes parked senders in park order: 'x' before 'y'
+        let mut woken = Vec::new();
+        for _ in 0..2 {
+            // the wake happens inside the receive that frees the slot
+            for event in receive(&mut sim) {
+                if let MpscEvent::InFlight { ch, .. } = event {
+                    woken.push(ch);
                 }
-                send(&mut sim, 2, 'x');
-                send(&mut sim, 3, 'y');
-                let mut landed = Vec::new();
-                for _ in 0..CAP + 2 {
-                    receive(&mut sim);
-                    sim.advance(FLIGHT);
-                    for event in sim.poll_due() {
-                        if let MpscEvent::Consumed { ch, .. } = event {
-                            landed.push(ch);
-                        }
-                    }
-                }
-                landed
-            })
-            .collect();
-        assert_eq!(outcomes[0], outcomes[1], "same seed => same wake order");
+            }
+            sim.advance(FLIGHT);
+            let _ = sim.poll_due();
+        }
+        assert_eq!(woken, ['x', 'y'], "parked sends wake FIFO, never randomly");
     }
 
     #[test]
@@ -964,6 +1072,32 @@ mod tests {
         assert!(snap.buffer.is_empty(), "waiting receiver takes it directly");
         assert!(!snap.waiting_receive);
         assert_eq!(snap.last_received, Some(BufferChar { ch: 'a', conn: 1 }));
+    }
+
+    /// Regression: a second `recv()` while one is already parked used to
+    /// overwrite a single `waiting` flag, so one of the two receives was
+    /// silently lost. The core keeps the waiter, so both are served.
+    #[test]
+    fn concurrent_receives_are_queued_not_dropped() {
+        let mut sim = sim_with_two_senders();
+        receive(&mut sim);
+        receive(&mut sim);
+        assert!(sim.snapshot().waiting_receive);
+
+        send(&mut sim, 1, 'a');
+        send(&mut sim, 1, 'b');
+        sim.advance(FLIGHT);
+        let _ = sim.poll_due();
+
+        // 'a' goes to the receive that was parked first (FIFO); 'b' is
+        // taken by the second, which the old single-flag sim had discarded.
+        let snap = sim.snapshot();
+        assert_eq!(snap.last_received, Some(BufferChar { ch: 'b', conn: 1 }));
+        assert!(
+            snap.buffer.is_empty(),
+            "neither value is stranded behind a lost receive"
+        );
+        assert!(!snap.waiting_receive, "both receives completed");
     }
 
     #[test]

@@ -2284,6 +2284,7 @@ dependencies = [
  "gloo-timers",
  "serde",
  "serde_json",
+ "sim-channels",
  "syntect",
  "tokio",
  "tokio-util",
