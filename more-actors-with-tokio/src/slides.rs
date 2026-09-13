@@ -76,7 +76,7 @@ pub fn BroadcastGameSlide() -> Element {
     rsx! {
         div { class: "slide",
             h2 { "The broadcast channel" }
-            p { class: "dim", "Sending never blocks: a full buffer evicts its oldest value. Fall behind and your next receive yields Lagged(n)." }
+            p { class: "dim", "Sending never blocks: a full buffer evicts its oldest value. A new receiver starts at the tail — it never sees history. Fall behind and your next receive yields Lagged(n)." }
             BroadcastGame {}
         }
     }
