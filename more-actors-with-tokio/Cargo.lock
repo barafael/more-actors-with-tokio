@@ -2287,6 +2287,7 @@ dependencies = [
  "sim-channels",
  "syntect",
  "tokio",
+ "tokio-tungstenite 0.28.0",
  "tokio-util",
  "tracing",
  "wasm-bindgen",

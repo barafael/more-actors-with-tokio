@@ -47,6 +47,10 @@ web = ["dioxus/web"]
 server = ["dioxus/server"]
 export = ["dep:dioxus-ssr"]
 
+[dev-dependencies]
+tokio-tungstenite = "0.28"
+futures-util = { version = "0.3", default-features = false, features = ["std", "sink"] }
+
 [[bin]]
 name = "export"
 path = "src/bin/export.rs"

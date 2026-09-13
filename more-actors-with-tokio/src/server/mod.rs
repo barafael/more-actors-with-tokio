@@ -164,20 +164,25 @@ pub(crate) async fn supervise<H, S>(
     }
 }
 
+/// The websocket planes, as a router awaiting its state. Split out from
+/// `serve_app` so tests can mount them on an ephemeral port without dioxus.
+pub fn game_routes() -> axum::Router<AppState> {
+    axum::Router::new()
+        .route("/ws/app", axum::routing::get(app_socket))
+        .route("/ws/game/button", axum::routing::get(button::button_socket))
+        .route("/ws/game/mpsc", axum::routing::get(mpsc::mpsc_socket))
+        .route("/ws/game/watch", axum::routing::get(watch::watch_socket))
+        .route(
+            "/ws/game/broadcast",
+            axum::routing::get(broadcast::broadcast_socket),
+        )
+}
+
 pub fn serve_app() -> ! {
     dioxus::server::serve(|| async {
-        // The websocket routes carry AppState; `with_state` resolves it away
-        // so the result merges into the dioxus router, which is stateless.
-        let sockets = axum::Router::new()
-            .route("/ws/app", axum::routing::get(app_socket))
-            .route("/ws/game/button", axum::routing::get(button::button_socket))
-            .route("/ws/game/mpsc", axum::routing::get(mpsc::mpsc_socket))
-            .route("/ws/game/watch", axum::routing::get(watch::watch_socket))
-            .route(
-                "/ws/game/broadcast",
-                axum::routing::get(broadcast::broadcast_socket),
-            )
-            .with_state(AppState::spawn());
+        // `with_state` resolves the state away so the result merges into the
+        // dioxus router, which is stateless.
+        let sockets = game_routes().with_state(AppState::spawn());
         let router = dioxus::server::router(crate::App).merge(sockets);
         Ok::<_, anyhow::Error>(router)
     })
