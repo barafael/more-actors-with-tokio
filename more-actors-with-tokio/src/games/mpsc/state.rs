@@ -7,8 +7,13 @@ use dioxus::prelude::*;
 use crate::protocol::{MpscEvent, MpscSnapshot};
 
 /// A value on its way from a sender to the receiver (pure cosmetics).
+///
+/// `key` is what identifies a flight: two identical chars sent from one
+/// handle are distinct flights, and matching them by value would collapse
+/// both into one and strand an animation.
 #[derive(Clone, Copy, PartialEq)]
 pub struct Flight {
+    pub key: u64,
     pub ch: char,
     pub conn: u64,
 }
@@ -17,6 +22,8 @@ pub struct Flight {
 pub struct ChannelState {
     pub snap: Signal<MpscSnapshot>,
     pub flights: Signal<Vec<Flight>>,
+    /// Monotonic flight-key generator (per client; flights are cosmetic).
+    pub key: Signal<u64>,
 }
 
 pub fn empty_snapshot() -> MpscSnapshot {
@@ -39,11 +46,17 @@ impl ChannelState {
         match event {
             MpscEvent::Snapshot { state } => self.snap.set(state),
             MpscEvent::InFlight { conn, ch } => {
-                self.flights.with_mut(|f| f.push(Flight { ch, conn }));
+                let key = *self.key.read() + 1;
+                self.key.set(key);
+                self.flights.with_mut(|f| f.push(Flight { key, ch, conn }));
             }
+            // land the oldest matching flight, not every identical one
             MpscEvent::Consumed { conn, ch } => {
-                self.flights
-                    .with_mut(|f| f.retain(|fl| *fl != Flight { ch, conn }));
+                self.flights.with_mut(|f| {
+                    if let Some(i) = f.iter().position(|fl| fl.conn == conn && fl.ch == ch) {
+                        f.remove(i);
+                    }
+                });
             }
             // Joins/leaves are covered by the Snapshot that follows them in
             // the same broadcast batch.

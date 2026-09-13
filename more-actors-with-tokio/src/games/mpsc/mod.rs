@@ -95,7 +95,7 @@ fn restart(conn: GameConnection, ctx: AppCtx, mut sim: Signal<MpscSim>, mut chan
         conn.set_status("single-player");
     } else {
         ctx.send(crate::AppUp::Restart {
-            game: "mpsc".to_string(),
+            game: crate::protocol::Game::Mpsc,
         });
     }
 }
@@ -109,6 +109,7 @@ pub fn MpscGame() -> Element {
     let chan = ChannelState {
         snap: use_signal(move || initial_snapshot(mode)),
         flights: use_signal(Vec::new),
+        key: use_signal(|| 0u64),
     };
     let mut my_conn: Signal<Option<u64>> = use_signal(|| None);
     let drafts = use_signal(Vec::<(u64, char)>::new);
@@ -130,15 +131,17 @@ pub fn MpscGame() -> Element {
         }
     });
 
-    // Local flights land on a tick, driven by the sim's own clock.
+    // Local flights land on a tick, driven by the sim's own clock. The task
+    // is spawned through dioxus so it is cancelled when the component
+    // unmounts; a bare loop would keep ticking against dead signals.
     #[cfg(target_arch = "wasm32")]
-    use_effect(move || {
-        if !conn.is_local() {
-            return;
-        }
+    use_future(move || {
         let mut sim = sim;
         let chan = chan;
-        spawn(async move {
+        async move {
+            if !conn.is_local() {
+                return;
+            }
             loop {
                 gloo_timers::future::TimeoutFuture::new(50).await;
                 let landed = sim.with_mut(|s| {
@@ -153,7 +156,7 @@ pub fn MpscGame() -> Element {
                     chan.set_snapshot(sim.read().snapshot());
                 }
             }
-        });
+        }
     });
 
     let senders = use_memo(move || chan.snap.read().senders.clone());
@@ -187,10 +190,13 @@ pub fn MpscGame() -> Element {
     let controls = use_memo(move || {
         let snap = chan.snap.read();
         let drafts = drafts.read();
-        let my = my_conn().unwrap_or(0);
+        // Before `Hello` arrives this client has no identity yet. Falling
+        // back to 0 would match LOCAL_CONN / the broadcast host handle and
+        // briefly show another party's controls as our own.
+        let my = my_conn();
         snap.senders
             .iter()
-            .filter(|s| s.owner == my)
+            .filter(|s| Some(s.owner) == my)
             .map(|s| ControlsView {
                 conn: s.conn,
                 blocked: s.blocked,
@@ -390,7 +396,7 @@ fn FlightLayer(flights: Vec<Flight>, senders: Vec<SenderInfo>) -> Element {
     rsx! {
         for f in flights {
             span {
-                key: "{f.conn}-{f.ch}",
+                key: "{f.key}",
                 class: "flight",
                 style: "--fy: {layout::sender_cy(&senders, f.conn)}%; color: {palette::sender_hex(f.conn)};",
                 "{f.ch}"
