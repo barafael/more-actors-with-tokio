@@ -42,6 +42,13 @@ RUN dx bundle \
     --release \
     --out-dir /out
 
+# Fail here rather than in production. The crate default-builds the wasm
+# client, so a build that picks the wrong features yields a native binary
+# that panics inside wasm-bindgen on startup. `dx bundle` selects the
+# server feature itself; this asserts that it actually did.
+RUN test -x /out/server || { echo "no server binary in bundle" >&2; exit 1; }
+RUN test -f /out/public/index.html || { echo "no client assets in bundle" >&2; exit 1; }
+
 FROM debian:bookworm-slim AS runtime
 
 # The deck loads webfonts from Google Fonts in the client, and any future
