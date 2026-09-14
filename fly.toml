@@ -1,0 +1,73 @@
+# fly.io deployment for the "Actors with Tokio" talk app.
+#
+# The app is stateful in a way that matters here: all four minigames run as
+# permanent server actors and their state lives only in that machine's
+# memory. Nothing is persisted, and there is no shared store between
+# machines, so this config deliberately keeps exactly one machine.
+
+app = "more-actors-with-tokio"
+primary_region = "fra"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  # dioxus-server defaults to 127.0.0.1:8080, which fly's proxy cannot
+  # reach; it must listen on all interfaces inside the machine.
+  IP = "0.0.0.0"
+  PORT = "8080"
+  RUST_LOG = "info,more_actors_with_tokio=debug"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+
+  # Suspend when idle to save cost between rehearsals.
+  #
+  # Know the trade-off before presenting: a suspended machine that wakes on
+  # the next request comes back with fresh actors. Every phone's websocket
+  # drops and all four games reset to their starting state. Clients do
+  # reconnect on their own (1-2-4s backoff) and a game restart is a
+  # sub-second respawn, so this is survivable — but do not let it happen
+  # mid-talk. Warm the app before you go on stage, and keep it warm:
+  #
+  #     fly machine start                     # wake it
+  #     curl -sS https://<app>.fly.dev/ >/dev/null
+  #
+  # For the talk itself, set auto_stop_machines = false and redeploy.
+  auto_stop_machines = "suspend"
+  auto_start_machines = true
+
+  # Suspended by default, so nothing needs to stay running when idle.
+  min_machines_running = 0
+
+  # NOTE: the single-machine constraint is NOT expressed here — fly has no
+  # `max_machines_running` in [http_service]. Machine count is a scale
+  # setting, so enforce it out of band and never scale this app up:
+  #
+  #     fly scale count 1
+  #
+  # It matters: every game is an actor whose state lives only in one
+  # machine's memory, with nothing persisted and nothing shared. A second
+  # machine is a second, unrelated set of games, and audience members would
+  # be split between them at random.
+
+  [http_service.concurrency]
+    # Every client holds websockets open (one app plane plus one per game
+    # slide it visits), so connections — not requests — are the real limit.
+    type = "connections"
+    soft_limit = 200
+    hard_limit = 400
+
+# The app plane answers on "/" and needs no auth, so a plain GET is a real
+# readiness signal: it exercises SSR, which is where a broken build shows.
+[[http_service.checks]]
+  grace_period = "10s"
+  interval = "30s"
+  method = "GET"
+  path = "/"
+  timeout = "5s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
