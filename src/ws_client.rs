@@ -47,8 +47,8 @@ impl SocketHandle {
         self.clear();
     }
 
-    /// Send a raw keep-alive frame; the server ignores unknown payloads but
-    /// the frame arrival proves the peer is alive.
+    /// Send a raw frame. Used for the keep-alive, whose arrival is the
+    /// whole signal — see [`crate::protocol::KEEPALIVE`].
     pub fn send_raw(&self, text: &str) {
         #[cfg(target_arch = "wasm32")]
         if let Some(RawSocket(ws)) = self.0.read().as_ref() {
@@ -99,8 +99,9 @@ pub fn spawn_ws_loop(path: &'static str, mut on_event: impl FnMut(WsEvent) + 'st
         loop {
             let (tx, mut rx) = futures_channel::mpsc::unbounded::<WsEvent>();
             // heartbeat: keep-alive frames so the server notices dead peers
-            // (wifi loss, crashed tabs) quickly. The server ignores the
-            // invalid payload but the frame updates its last-seen stamp.
+            // (wifi loss, crashed tabs) quickly. The server recognises the
+            // payload as `protocol::KEEPALIVE` and only updates its
+            // last-seen stamp.
             let ping_tx = tx.clone();
             let opened = open_websocket(&ws_url(path), tx);
             let ping_task = spawn(async move {

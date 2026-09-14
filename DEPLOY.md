@@ -116,7 +116,8 @@ fly secrets set PRESENTER_KEY="$(openssl rand -hex 16)"
 
 Present at `https://<app>.fly.dev/?k=<key>`. Open that once on the laptop
 before the talk; the key stays in that tab's URL and every socket it opens
-carries it.
+carries it. The server logs the whole URL on startup (`fly logs`), built
+from `JOIN_URL`, so you do not have to assemble it by hand.
 
 If the variable is unset the server **generates one per run and logs it at
 warn level**. That keeps the default safe for a public URL while still

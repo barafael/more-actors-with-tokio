@@ -9,7 +9,7 @@ pub mod ws_client;
 
 use dioxus::prelude::*;
 
-use crate::protocol::{AppDown, Role};
+use crate::protocol::{AppDown, Role, SLIDE_COUNT};
 use crate::ws_client::{SocketHandle, WsEvent};
 
 pub use crate::protocol::AppUp;
@@ -94,6 +94,25 @@ impl AppCtx {
     pub fn may_present(&self) -> bool {
         self.identity.read().role.may_present()
     }
+
+    /// Step the deck by one slide in either direction.
+    ///
+    /// The server owns the slide index in a talk, so remote mode asks and
+    /// waits to be told; the export has no server and moves its own signal.
+    /// Buttons and keys share this so they cannot drift.
+    pub fn step_slide(&self, mode: GameMode, mut slide: Signal<usize>, forward: bool) {
+        match mode {
+            GameMode::Remote => self.send(if forward {
+                AppUp::AdvanceSlide
+            } else {
+                AppUp::PreviousSlide
+            }),
+            GameMode::Local => slide.with_mut(|index| {
+                let step = if forward { 1 } else { SLIDE_COUNT - 1 };
+                *index = (*index + step) % SLIDE_COUNT;
+            }),
+        }
+    }
 }
 
 /// The client's view of who it is, as granted by the server.
@@ -143,13 +162,15 @@ pub fn Deck(mode: GameMode, initial_slide: usize) -> Element {
 
     let mut slide = use_signal(move || initial_slide);
     let mut showing_join = use_signal(|| false);
+    // The navigation bar is hidden until the mouse moves, marp-style.
+    let mut awake = use_signal(|| false);
 
     use_effect(move || {
         if mode == GameMode::Local {
             return;
         }
         ws_client::spawn_ws_loop("/ws/app", move |event| match event {
-            WsEvent::Ping => app.send_raw("ping"),
+            WsEvent::Ping => app.send_raw(crate::protocol::KEEPALIVE),
             WsEvent::Open { socket } => {
                 app.set(socket);
             }
@@ -177,13 +198,55 @@ pub fn Deck(mode: GameMode, initial_slide: usize) -> Element {
         });
     });
 
-    // `q` toggles the join code, as CONCEPT.md specifies. Bound on a
-    // focusable root rather than the window so the export stays inert.
+    // Deck keys, bound on a focusable root rather than the window so the
+    // export stays inert. `q` is the join code, as CONCEPT.md specifies;
+    // the rest are the navigation a presenter expects from any deck.
     let join = identity.read().join_url.clone();
-    let toggle_join = move |event: KeyboardEvent| {
-        if event.key() == Key::Character("q".to_string()) {
+    let ctx = AppCtx { app, identity };
+    let on_key = move |event: KeyboardEvent| {
+        let character = |want: &str| event.key() == Key::Character(want.to_string());
+
+        if character("q") {
             showing_join.toggle();
+            return;
         }
+        // Escape closes the overlay rather than moving the deck, so a
+        // presenter cannot dismiss the QR and skip a slide in one press.
+        if event.key() == Key::Escape {
+            showing_join.set(false);
+            return;
+        }
+        if !ctx.may_present() {
+            return;
+        }
+        match event.key() {
+            Key::ArrowRight | Key::PageDown => ctx.step_slide(mode, slide, true),
+            Key::ArrowLeft | Key::PageUp => ctx.step_slide(mode, slide, false),
+            // space is the remote-clicker key, and the one a presenter
+            // reaches for without thinking
+            _ if character(" ") => ctx.step_slide(mode, slide, true),
+            _ => {}
+        }
+    };
+
+    // Waking the bar lives here rather than on the bar's own container:
+    // that container spans the bottom of the slide, where game controls
+    // genuinely sit, so it must stay click-through and therefore cannot
+    // hear the mouse itself. Each movement restarts the countdown and the
+    // generation guard makes the last one win.
+    let mut generation = use_signal(|| 0u64);
+    let wake = move |_| {
+        if !awake() {
+            awake.set(true);
+        }
+        let mine = generation() + 1;
+        generation.set(mine);
+        spawn(async move {
+            sleep_ms(2000).await;
+            if generation() == mine {
+                awake.set(false);
+            }
+        });
     };
 
     rsx! {
@@ -207,7 +270,8 @@ pub fn Deck(mode: GameMode, initial_slide: usize) -> Element {
                     })
                     .ok();
             },
-            onkeydown: toggle_join,
+            onkeydown: on_key,
+            onmousemove: wake,
             div { class: "topbar",
                 SeatBadge {}
             }
@@ -219,7 +283,7 @@ pub fn Deck(mode: GameMode, initial_slide: usize) -> Element {
                 4 => rsx! { slides::Recipe {} },
                 _ => rsx! { slides::BroadcastGameSlide {} },
             } }
-            slides::Chrome { slide: slide }
+            slides::Chrome { slide, awake }
             if showing_join() {
                 if let Some(url) = join {
                     games::qr::JoinOverlay {
@@ -263,4 +327,12 @@ fn SeatBadge() -> Element {
             }
         }
     }
+}
+
+/// Sleep without pulling an async runtime into the client.
+async fn sleep_ms(ms: u32) {
+    #[cfg(target_arch = "wasm32")]
+    gloo_timers::future::TimeoutFuture::new(ms).await;
+    #[cfg(not(target_arch = "wasm32"))]
+    let _ = ms;
 }

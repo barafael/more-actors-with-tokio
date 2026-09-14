@@ -114,8 +114,22 @@ strong {
 
 /* ---- chrome (presenter nav) ---- */
 
-.chrome {
+/* Holds the bar at the bottom without taking the slide's clicks. Game
+   controls genuinely sit in this band — mpsc's "clone sender" and the
+   per-game "restart" are ~20px above the bar — so the wake-up listener
+   lives on the deck root instead, where it cannot intercept anything. */
+.chrome-zone {
     position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 96px;
+    z-index: 30;
+    pointer-events: none;
+}
+
+.chrome {
+    position: absolute;
     bottom: 14px;
     left: 50%;
     transform: translateX(-50%);
@@ -125,7 +139,30 @@ strong {
     padding: 6px 14px;
     background: rgba(0, 0, 0, 0.65);
     border-radius: 999px;
-    z-index: 30;
+
+    /* marp idiom: out of the way until the mouse moves. Opacity rather
+       than display so the bar does not reflow the slide under it. */
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 240ms ease;
+}
+
+.chrome.awake {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+/* A presenter navigating by keyboard never moves the mouse, and someone
+   who cannot use a mouse should not have to. Focus brings it back. */
+.chrome:focus-within {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .chrome {
+        transition: none;
+    }
 }
 
 .chrome button {

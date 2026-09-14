@@ -40,8 +40,19 @@ PRESENTER_KEY=stagekey JOIN_URL=http://127.0.0.1:8080   dx serve --platform web 
 ```
 
 Open <http://127.0.0.1:8080/?k=stagekey> to present, and plain
-<http://127.0.0.1:8080> for an audience phone. Press **`q`** on the
-presenter's deck for the fullscreen join code.
+<http://127.0.0.1:8080> for an audience phone. The server also logs the
+presenter URL on startup, so you can copy it out of the terminal.
+
+Presenter keys:
+
+| Key | Does |
+|---|---|
+| `→` `space` `PageDown` | next slide |
+| `←` `PageUp` | previous slide |
+| `q` | the fullscreen join code |
+| `Esc` | close the join code |
+
+The navigation bar hides itself until the mouse moves.
 
 Leave `PRESENTER_KEY` unset and the server generates one per run and logs
 it — safe by default, but it changes on every restart.

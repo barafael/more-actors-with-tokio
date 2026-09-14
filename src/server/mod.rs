@@ -3,7 +3,7 @@ use axum::extract::State;
 use axum::response::Response;
 use tokio::sync::{mpsc as tokio_mpsc, watch as tokio_watch};
 
-use crate::protocol::{AppDown, AppUp, Game, SLIDE_COUNT};
+use crate::protocol::{AppDown, AppUp, Game, KEEPALIVE, SLIDE_COUNT};
 use crate::server::auth::{Connecting, Joining};
 use crate::server::broadcast::BroadcastHandles;
 use crate::server::button::ButtonHandles;
@@ -256,6 +256,8 @@ async fn handle_app_socket(mut socket: WebSocket, state: AppState, connecting: C
                 }
             }
             msg = socket.recv() => match msg {
+                // the heartbeat proves liveness by arriving; nothing to decode
+                Some(Ok(Message::Text(text))) if text.as_str() == KEEPALIVE => {}
                 Some(Ok(Message::Text(text))) => match serde_json::from_str::<AppUp>(text.as_str()) {
                     // Every branch here drives the room, so every branch is
                     // presenter-only. The client hides these controls, but
@@ -324,30 +326,54 @@ pub(crate) async fn send_json(
     socket.send(Message::text(json)).await
 }
 
-/// Make sure a presenter key exists, and tell the operator what it is.
+/// Make sure a presenter key exists, and print the URL that uses it.
 ///
 /// Without this the safe default (no key configured, nobody may present)
-/// would lock the presenter out of their own talk with no way in. Generating
-/// one keeps the default safe *and* usable: the room cannot present, the
-/// person reading the logs can.
-fn announce_presenter_key() {
-    if auth::presenter_key().is_some() {
-        tracing::info!("presenter key read from {}", auth::PRESENTER_KEY_ENV);
-        return;
+/// would lock the presenter out of their own talk with no way in.
+/// Generating one keeps the default safe *and* usable: the room cannot
+/// present, the person reading the logs can.
+///
+/// The whole URL is logged, not just the key, because that is the thing
+/// you actually need — copy it out of the terminal and open it. It is only
+/// a secret from the audience, and the audience is not reading the server
+/// log.
+pub fn announce_presenter_key() {
+    // Read the environment directly, not through `presenter_key()`: that
+    // accessor caches on first read, so asking it whether a key exists
+    // would pin `None` and the generated one below would never take.
+    let configured = std::env::var(auth::PRESENTER_KEY_ENV).is_ok_and(|key| !key.is_empty());
+
+    if !configured {
+        let generated = format!("{:016x}", fastrand_u64());
+        std::env::set_var(auth::PRESENTER_KEY_ENV, &generated);
     }
 
-    // Set it before the first read so `presenter_key`'s cache picks it up.
-    let generated = format!("{:016x}", fastrand_u64());
-    std::env::set_var(auth::PRESENTER_KEY_ENV, &generated);
+    let Some(key) = auth::presenter_key() else {
+        tracing::error!("could not install a generated presenter key");
+        return;
+    };
 
-    match auth::presenter_key() {
-        Some(key) => tracing::warn!(
-            "no {} set; generated one for this run. present at /?{}={}",
+    let url = presenter_url(key);
+    if configured {
+        tracing::info!(%url, "present here (key from {})", auth::PRESENTER_KEY_ENV);
+    } else {
+        tracing::warn!(
+            %url,
+            "no {} set, so one was generated for this run; it changes on every restart",
             auth::PRESENTER_KEY_ENV,
-            crate::protocol::PRESENTER_PARAM,
-            key,
-        ),
-        None => tracing::error!("could not install a generated presenter key"),
+        );
+    }
+}
+
+/// The URL a presenter opens, built from `JOIN_URL` when it is set.
+///
+/// Falls back to a bare path: the server cannot know its own public
+/// address, and a path is still enough to paste after a hostname.
+fn presenter_url(key: &str) -> String {
+    let param = crate::protocol::PRESENTER_PARAM;
+    match join_url() {
+        Some(base) => format!("{base}/?{param}={key}"),
+        None => format!("/?{param}={key}"),
     }
 }
 
@@ -362,4 +388,32 @@ fn fastrand_u64() -> u64 {
             .unwrap_or_default(),
     );
     hasher.finish()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn announcing_a_generated_key_does_not_panic() {
+        // the startup path: no key configured, so one is generated and the
+        // url is logged. Runs in-process, so it also proves the generated
+        // key installs into the cache `presenter_key` reads.
+        announce_presenter_key();
+        assert!(
+            auth::presenter_key().is_some(),
+            "a key must exist after announcing",
+        );
+    }
+
+    #[test]
+    fn the_presenter_url_carries_the_key_and_is_openable() {
+        // JOIN_URL is read once per process, so this covers whichever
+        // branch this run takes: with a base it is absolute, without one a
+        // path — either way it ends in the key and can be pasted.
+        let url = presenter_url("secret123");
+        assert!(url.ends_with("k=secret123"), "got {url}");
+        assert!(url.contains("/?"), "got {url}");
+        assert!(!url.contains("PRESENTER"), "no env var name leaked: {url}");
+    }
 }

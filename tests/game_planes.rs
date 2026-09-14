@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use more_actors_with_tokio::protocol::{
-    AppDown, BroadcastError, BroadcastEvent, BroadcastWire, MpscEvent, MpscWire, Role,
+    AppDown, BroadcastError, BroadcastEvent, BroadcastWire, MpscEvent, MpscWire, Role, KEEPALIVE,
     PRESENTER_PARAM, TICKET_PARAM,
 };
 use more_actors_with_tokio::server::auth::PRESENTER_KEY_ENV;
@@ -411,4 +411,88 @@ async fn the_room_runs_out_of_tickets() {
     assert_eq!(down.granted_ticket, None);
     assert_eq!(down.players_present, PLAYER_TICKETS);
     assert_eq!(down.players_capacity, PLAYER_TICKETS);
+}
+
+/// The keep-alive must not look like a malformed command.
+///
+/// Every client sends one every 3 seconds, so if the server treated it as
+/// an undecodable message the logs would fill with decode errors and bury
+/// anything real. The socket must also stay open.
+#[tokio::test]
+async fn the_keepalive_is_not_a_protocol_error() {
+    let base = serve().await;
+
+    let mut app = connect_as_presenter(&base, "/ws/app").await;
+    let first = tokio::time::timeout(Duration::from_secs(5), app.next())
+        .await
+        .expect("app payload before deadline")
+        .expect("stream open")
+        .expect("frame");
+    let Message::Text(text) = first else {
+        panic!("expected a text frame, got {first:?}");
+    };
+    let before: AppDown = serde_json::from_str(&text).expect("decode AppDown");
+
+    for _ in 0..3 {
+        app.send(Message::Text(KEEPALIVE.into()))
+            .await
+            .expect("send keepalive");
+    }
+
+    // The socket is still usable: a real command after the pings works, and
+    // its reply proves the pings neither closed nor desynchronised it.
+    app.send(Message::Text(
+        serde_json::to_string("AdvanceSlide")
+            .expect("encode")
+            .into(),
+    ))
+    .await
+    .expect("send command");
+
+    let frame = tokio::time::timeout(Duration::from_secs(5), app.next())
+        .await
+        .expect("payload before deadline")
+        .expect("stream open")
+        .expect("frame");
+    let Message::Text(text) = frame else {
+        panic!("expected a text frame, got {frame:?}");
+    };
+    let after: AppDown = serde_json::from_str(&text).expect("decode AppDown");
+    assert_eq!(after.slide, before.slide + 1, "the command still landed");
+}
+
+/// A generated presenter key must actually work.
+///
+/// `presenter_key()` caches on first read, so an announcement that reads
+/// before it writes pins `None` and nobody can ever present — a failure
+/// that is invisible until someone tries to advance a slide on stage.
+#[tokio::test]
+async fn a_generated_presenter_key_can_present() {
+    // no PRESENTER_KEY in the environment: the server must generate one
+    std::env::remove_var(PRESENTER_KEY_ENV);
+    more_actors_with_tokio::server::announce_presenter_key();
+
+    let key = std::env::var(PRESENTER_KEY_ENV).expect("a key was generated");
+    assert!(!key.is_empty());
+
+    let state = more_actors_with_tokio::server::AppState::spawn();
+    let app = more_actors_with_tokio::server::game_routes().with_state(state);
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.expect("serve");
+    });
+    let base = format!("ws://{addr}");
+
+    let mut app = connect(&base, &format!("/ws/app?{PRESENTER_PARAM}={key}")).await;
+    let frame = tokio::time::timeout(Duration::from_secs(5), app.next())
+        .await
+        .expect("payload before deadline")
+        .expect("stream open")
+        .expect("frame");
+    let Message::Text(text) = frame else {
+        panic!("expected a text frame, got {frame:?}");
+    };
+    let down: AppDown = serde_json::from_str(&text).expect("decode AppDown");
+    assert_eq!(down.role, Role::Presenter, "the generated key must present");
 }

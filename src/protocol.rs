@@ -14,6 +14,14 @@ pub const WATCH_MAX_RX: usize = 6;
 /// schedules landings with it and the client animates over the same span.
 pub const MPSC_FLIGHT_MS: u64 = 700;
 
+/// The client's keep-alive frame.
+///
+/// Deliberately not JSON: its only job is to prove the peer is alive, and
+/// the arrival of the frame does that. Servers recognise it by value so a
+/// heartbeat is never mistaken for a malformed command — logging one of
+/// these every three seconds per phone would bury anything real.
+pub const KEEPALIVE: &str = "ping";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Color {
     Red,

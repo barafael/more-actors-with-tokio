@@ -67,7 +67,7 @@ pub fn use_game_connection<E: DeserializeOwned>(
         }
         let on_event = on_event.clone();
         crate::ws_client::spawn_ws_loop(path, move |event| match event {
-            WsEvent::Ping => handle.send_raw("ping"),
+            WsEvent::Ping => handle.send_raw(crate::protocol::KEEPALIVE),
             WsEvent::Open { socket } => {
                 handle.set(socket);
                 status.set("connected".to_string());

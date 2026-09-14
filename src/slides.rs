@@ -5,7 +5,7 @@ use crate::games::button::ButtonGame;
 use crate::games::mpsc::MpscGame;
 use crate::games::watch::WatchGame;
 use crate::highlight::highlight;
-use crate::{protocol::SLIDE_COUNT, AppCtx, AppUp, GameMode};
+use crate::{protocol::SLIDE_COUNT, AppCtx, GameMode};
 
 #[component]
 pub fn Title() -> Element {
@@ -92,36 +92,43 @@ pub fn Recipe() -> Element {
     }
 }
 
+/// The presenter's navigation overlay, in the marp idiom: it fades in when
+/// the mouse moves and fades back out when it rests.
+///
+/// A talk is mostly a still image, and a control bar parked over every
+/// slide is one more thing on the projector. Keyboard navigation is the
+/// primary interface — this is for when the presenter is holding a mouse.
 #[component]
-pub fn Chrome(slide: Signal<usize>) -> Element {
+pub fn Chrome(slide: Signal<usize>, awake: Signal<bool>) -> Element {
     let ctx: AppCtx = use_context();
     let mode = use_context::<GameMode>();
     let current = slide() + 1;
-    // Only the presenter drives the deck. The server refuses these
-    // commands from anyone else, so this hides a control that would not
-    // have worked rather than enforcing anything.
+
+    // Only the presenter drives the deck. The server refuses these commands
+    // from anyone else, so this hides a control that would not have worked
+    // rather than enforcing anything. No hooks run above this point, so the
+    // early return cannot desynchronise them.
     if !ctx.may_present() {
         return rsx! {};
     }
 
     rsx! {
-        div { class: "chrome",
-            button {
-                class: "nav",
-                onclick: move |_| match mode {
-                    GameMode::Remote => ctx.send(AppUp::PreviousSlide),
-                    GameMode::Local => slide.with_mut(|s| *s = (*s + SLIDE_COUNT - 1) % SLIDE_COUNT),
-                },
-                "←"
-            }
-            span { class: "counter", "{current} / {SLIDE_COUNT}" }
-            button {
-                class: "nav",
-                onclick: move |_| match mode {
-                    GameMode::Remote => ctx.send(AppUp::AdvanceSlide),
-                    GameMode::Local => slide.with_mut(|s| *s = (*s + 1) % SLIDE_COUNT),
-                },
-                "→"
+        div { class: "chrome-zone",
+            div {
+                class: if awake() { "chrome awake" } else { "chrome" },
+                button {
+                    class: "nav",
+                    aria_label: "previous slide",
+                    onclick: move |_| ctx.step_slide(mode, slide, false),
+                    "←"
+                }
+                span { class: "counter", "{current} / {SLIDE_COUNT}" }
+                button {
+                    class: "nav",
+                    aria_label: "next slide",
+                    onclick: move |_| ctx.step_slide(mode, slide, true),
+                    "→"
+                }
             }
         }
     }
