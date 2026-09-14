@@ -6,6 +6,23 @@ The deck is a fullstack Dioxus app: a server that renders the slides and
 hosts the minigame actors, plus a wasm client the audience loads on their
 phones. `fly deploy` builds both from [Dockerfile](Dockerfile).
 
+## Deploy from the repo root
+
+```sh
+cd <repo root>          # NOT more-actors-with-tokio/
+fly deploy
+```
+
+This matters. The build config lives at the repo root — [fly.toml](fly.toml)
+and [Dockerfile](Dockerfile) — and the Dockerfile copies from
+`more-actors-with-tokio/` itself. Run `fly deploy` (or `fly launch`) from
+inside the crate directory and fly writes a *second* `fly.toml` there,
+does not see the Dockerfile, and falls back to auto-detecting a Rust
+project. That failure mode is described under Troubleshooting below; it is
+the one to know about.
+
+If a stray `more-actors-with-tokio/fly.toml` exists, delete it.
+
 ## First deploy
 
 ```sh
@@ -99,3 +116,54 @@ client-side `(pointer: coarse)` media query that anyone can bypass with
 devtools. On a public URL, an attendee can take the presenter slot or flip
 your slides. Fine on localhost; think about it before putting the fly URL on
 a QR code in front of a room.
+
+## Troubleshooting
+
+### `cannot call wasm-bindgen imported functions on non-wasm targets`
+
+The machine is running the **web client** compiled for Linux, not the
+server. It boots, panics immediately, exits 101, and fly restarts it in a
+loop.
+
+The cause is the crate's default feature:
+
+```toml
+[features]
+default = ["web"]          # dioxus/web — the wasm client
+server = ["dioxus/server"] # the axum server
+```
+
+A plain `cargo build` or `cargo install` — which is what fly's Rust
+buildpack runs when it cannot find a Dockerfile — therefore builds the
+client and names it `more-actors-with-tokio`. Two tells in the log:
+
+- the binary is `/usr/local/bin/more-actors-with-tokio`, not `/app/server`,
+  so the image did not come from this Dockerfile;
+- the validated config path is `more-actors-with-tokio/fly.toml`, not the
+  one at the repo root.
+
+Fix: deploy from the repo root, delete any stray `fly.toml` in the crate
+directory, and let the Dockerfile build the image. `src/main.rs` now
+fails with an explanation instead of a wasm panic if this recurs.
+
+### `flyctl deploy --image ...` deploys the wrong thing
+
+Passing `--image` skips the build entirely and ships whatever that tag
+points at, including an image built earlier by the buildpack. To rebuild
+from the Dockerfile, deploy without `--image`:
+
+```sh
+fly deploy                 # builds from Dockerfile
+fly deploy --no-cache      # if you suspect a stale layer
+```
+
+### `failed to add ip to app: org_slug is only supported with private_v6 type`
+
+This surfaced alongside the crash loop and is an IP-allocation error, not an
+app fault. Once the app boots, allocate addresses explicitly:
+
+```sh
+fly ips list
+fly ips allocate-v4 --shared
+fly ips allocate-v6
+```
