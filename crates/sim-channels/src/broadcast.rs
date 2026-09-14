@@ -213,6 +213,17 @@ impl<T> BroadcastCore<T> {
         let slot = self.slots.get(id)?;
         slot.alive.then_some(slot.next_seq)
     }
+
+    /// Whether the receiver is parked inside `recv`, waiting for a value.
+    ///
+    /// Distinct from "caught up": a receiver is only waiting once it has
+    /// actually polled and found the ring empty. Tests that need a reader
+    /// to be blocked *before* they send must observe this, not its cursor.
+    pub fn is_waiting(&self, id: usize) -> bool {
+        self.slots
+            .get(id)
+            .is_some_and(|slot| slot.alive && slot.waiting.is_some())
+    }
 }
 
 impl<T: Clone> BroadcastCore<T> {
@@ -662,13 +673,13 @@ mod handle_tests {
             (first, second)
         });
         tx.send('a').expect("receiver alive");
-        // Wait until the reader consumed 'a' and is parked again before
-        // overflowing the ring. Observing the cursor is what makes this
-        // deterministic: the reader reporting progress only proves it left
-        // the first recv, not that it entered the second, and the two sends
-        // below would otherwise race it into a lag of 2.
+        // Wait until the reader is parked inside its *second* recv before
+        // overflowing the ring. The cursor reaching 1 only proves it
+        // consumed 'a'; if both sends land before it parks it reads 'c'
+        // directly and lags by 2. `is_waiting` is the state that actually
+        // means "blocked, will be woken by the next send".
         got_rx.recv().expect("reader progress");
-        while tx.shared.lock.lock().receiver_seq(reader_slot) != Some(1) {
+        while !tx.shared.lock.lock().is_waiting(reader_slot) {
             thread::yield_now();
         }
         tx.send('b').expect("receiver alive");
@@ -679,6 +690,31 @@ mod handle_tests {
         // the untouched original handle lags by everything it never read
         assert_eq!(rx.try_recv(), Err(TryRecvError::Lagged(2)));
         assert_eq!(rx.try_recv(), Ok('c'), "resumed at the oldest retained");
+    }
+
+    #[test]
+    fn is_waiting_tracks_the_park_and_the_wake() {
+        // the signal `recv_reports_lag_after_overflow` synchronises on
+        let mut core = BroadcastCore::<char>::new(4);
+        let rx = core.subscribe();
+        assert!(!core.is_waiting(rx), "not yet polled");
+
+        assert!(matches!(core.poll_recv(rx), BroadcastPoll::Empty { .. }));
+        assert!(core.is_waiting(rx), "parked with the ring empty");
+
+        core.send('a').expect("receiver alive");
+        assert_eq!(core.poll_recv(rx), BroadcastPoll::Value('a'));
+        assert!(!core.is_waiting(rx), "woken and consumed");
+    }
+
+    #[test]
+    fn a_dropped_receiver_is_not_waiting() {
+        let mut core = BroadcastCore::<char>::new(4);
+        let rx = core.subscribe();
+        core.poll_recv(rx);
+        assert!(core.is_waiting(rx));
+        core.drop_receiver(rx);
+        assert!(!core.is_waiting(rx));
     }
 
     #[test]
