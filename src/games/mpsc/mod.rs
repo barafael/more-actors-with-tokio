@@ -8,7 +8,7 @@ mod state;
 
 use dioxus::prelude::*;
 
-use crate::games::{is_desktop, use_game_connection, GameConnection};
+use crate::games::{use_game_connection, GameConnection};
 use crate::protocol::{MpscEvent, MpscSnapshot, MpscWire, SenderInfo, MPSC_CAPACITY};
 use crate::sim::{now_ms, MpscSim, LOCAL_CONN};
 use crate::{AppCtx, GameMode};
@@ -128,10 +128,11 @@ pub fn MpscGame() -> Element {
         }
     });
 
-    // The presenter slot gates cloning server-side; desktop clients claim it,
-    // last claim wins.
+    // The presenter slot gates cloning server-side. Only a connection the
+    // server granted the presenter role bothers asking; the server refuses
+    // anyone else, so this is just avoiding a pointless round trip.
     use_effect(move || {
-        if conn.connected() && !conn.is_local() && my_conn().is_some() && is_desktop() {
+        if conn.connected() && !conn.is_local() && my_conn().is_some() && ctx.may_present() {
             conn.send(&MpscWire::ClaimPresenter);
         }
     });
@@ -265,23 +266,25 @@ pub fn MpscGame() -> Element {
                 } else {
                     span {}
                 }
-                button {
-                    class: "btn desktop-only",
-                    onclick: move |_| {
-                        if conn.is_local() {
-                            let new = next_local_conn();
-                            next_local_conn.set(new + 1);
-                            dispatch_local(sim, chan, MpscWire::CloneSender { conn: new });
-                        } else {
-                            conn.send(&MpscWire::CloneSender { conn: 0 });
-                        }
-                    },
-                    "+ clone sender"
-                }
-                button {
-                    class: "btn desktop-only",
-                    onclick: move |_| restart(conn, ctx, sim, chan),
-                    "restart"
+                if ctx.may_present() {
+                    button {
+                        class: "btn",
+                        onclick: move |_| {
+                            if conn.is_local() {
+                                let new = next_local_conn();
+                                next_local_conn.set(new + 1);
+                                dispatch_local(sim, chan, MpscWire::CloneSender { conn: new });
+                            } else {
+                                conn.send(&MpscWire::CloneSender { conn: 0 });
+                            }
+                        },
+                        "+ clone sender"
+                    }
+                    button {
+                        class: "btn",
+                        onclick: move |_| restart(conn, ctx, sim, chan),
+                        "restart"
+                    }
                 }
             }
         }

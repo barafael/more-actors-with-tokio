@@ -97,8 +97,15 @@ pub fn Chrome(slide: Signal<usize>) -> Element {
     let ctx: AppCtx = use_context();
     let mode = use_context::<GameMode>();
     let current = slide() + 1;
+    // Only the presenter drives the deck. The server refuses these
+    // commands from anyone else, so this hides a control that would not
+    // have worked rather than enforcing anything.
+    if !ctx.may_present() {
+        return rsx! {};
+    }
+
     rsx! {
-        div { class: "chrome desktop-only",
+        div { class: "chrome",
             button {
                 class: "nav",
                 onclick: move |_| match mode {

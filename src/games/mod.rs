@@ -13,6 +13,7 @@ pub mod broadcast;
 pub mod button;
 pub mod mpsc;
 pub mod palette;
+pub mod qr;
 pub mod watch;
 
 #[derive(Clone, Copy)]
@@ -38,23 +39,6 @@ impl GameConnection {
 
     pub fn set_status(mut self, status: impl Into<String>) {
         self.status.set(status.into());
-    }
-}
-
-/// Heuristic desktop detection for the presenter slot: phones have a coarse
-/// pointer, everything else (laptop, desktop, headless) counts as presenter
-/// hardware.
-pub fn is_desktop() -> bool {
-    #[cfg(target_arch = "wasm32")]
-    {
-        web_sys::window()
-            .and_then(|w| w.match_media("(pointer: coarse)").ok().flatten())
-            .map(|media| !media.matches())
-            .unwrap_or(true)
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        true
     }
 }
 

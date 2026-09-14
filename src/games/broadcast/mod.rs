@@ -9,7 +9,7 @@ mod state;
 use dioxus::prelude::*;
 
 use crate::games::palette;
-use crate::games::{is_desktop, use_game_connection, GameConnection};
+use crate::games::{use_game_connection, GameConnection};
 use crate::protocol::{
     BroadcastEvent, BroadcastSnapshot, BroadcastWire, RxState, BROADCAST_CAPACITY,
 };
@@ -178,7 +178,7 @@ pub fn BroadcastGame() -> Element {
     // Claim the presenter slot: the host seed sender transfers to the
     // presenter, so they can send from it (last claim wins).
     use_effect(move || {
-        if conn.connected() && !conn.is_local() && my_conn().is_some() && is_desktop() {
+        if conn.connected() && !conn.is_local() && my_conn().is_some() && ctx.may_present() {
             conn.send(&BroadcastWire::ClaimPresenter);
         }
     });
@@ -344,11 +344,13 @@ pub fn BroadcastGame() -> Element {
                 if let Some(receiver) = my_receiver() {
                     span { class: "note-pill", "rx #{receiver}" }
                 }
-                button {
-                    class: "btn desktop-only",
-                    disabled: !conn.connected(),
-                    onclick: move |_| restart(conn, ctx, sim, chan),
-                    "restart"
+                if ctx.may_present() {
+                    button {
+                        class: "btn",
+                        disabled: !conn.connected(),
+                        onclick: move |_| restart(conn, ctx, sim, chan),
+                        "restart"
+                    }
                 }
             }
         }

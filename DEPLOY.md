@@ -101,14 +101,53 @@ Ranked by how much they preserve:
    game single-player in the browser. No server, no audience participation,
    but the deck still works and still demos.
 
-## Known gap
+## The two secrets
 
-The presenter slot is **not authenticated**. `ClaimPresenter` and
-`AdvanceSlide` are accepted from any connection; the only gate is a
-client-side `(pointer: coarse)` media query that anyone can bypass with
-devtools. On a public URL, an attendee can take the presenter slot or flip
-your slides. Fine on localhost; think about it before putting the fly URL on
-a QR code in front of a room.
+Both are environment variables. Neither has a safe default that is also
+usable, so set them explicitly.
+
+**`PRESENTER_KEY`** — whoever presents it may drive slides, claim the
+presenter slot in each game, and restart actors. Everyone else is refused
+by the server, not merely hidden from the button.
+
+```sh
+fly secrets set PRESENTER_KEY="$(openssl rand -hex 16)"
+```
+
+Present at `https://<app>.fly.dev/?k=<key>`. Open that once on the laptop
+before the talk; the key stays in that tab's URL and every socket it opens
+carries it.
+
+If the variable is unset the server **generates one per run and logs it at
+warn level**. That keeps the default safe for a public URL while still
+letting you in — but it changes on every restart, and a suspended machine
+restarts. Set it.
+
+**`JOIN_URL`** — the address the QR code encodes. The server cannot work
+this out for itself: behind fly's proxy it only sees a private bind address.
+
+```sh
+fly secrets set JOIN_URL="https://<app>.fly.dev"
+```
+
+Unset, the presenter simply gets no QR code — the deck still works.
+
+## Audience handles
+
+The room shares a fixed pool of **24 player tickets** (`PLAYER_TICKETS`).
+Scanning the QR opens the deck, which takes one seat and writes the ticket
+into that phone's URL, so a reload or a dropped connection keeps the same
+seat.
+
+- A seat is released **15 minutes after its last socket closes**, not on
+  disconnect — a phone that locks its screen must not lose its handle.
+- Once every seat is taken, later arrivals are seated as **spectators**:
+  they see every game but cannot act. Their badge says so.
+- Only the page the QR points at hands out seats. Opening a game socket
+  directly never mints one.
+
+Press **`q`** on the presenter's deck for the fullscreen join code; it also
+shows how many handles are still free.
 
 ## Troubleshooting
 

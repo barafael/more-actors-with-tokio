@@ -115,10 +115,12 @@ pub fn ButtonGame() -> Element {
                 } else {
                     span {}
                 }
-                button {
-                    class: "btn desktop-only",
-                    onclick: move |_| restart(conn, ctx, sim, state),
-                    "restart"
+                if ctx.may_present() {
+                    button {
+                        class: "btn",
+                        onclick: move |_| restart(conn, ctx, sim, state),
+                        "restart"
+                    }
                 }
             }
         }

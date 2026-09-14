@@ -11,7 +11,8 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
 use crate::protocol::{WatchEvent, WatchSnapshot, WatchWire};
-use crate::server::{next_conn, send_json, AppState};
+use crate::server::auth::Connecting;
+use crate::server::{release, send_json, AppState};
 use crate::sim::WatchSim;
 
 pub enum WatchMsg {
@@ -189,15 +190,16 @@ pub async fn backend(
 
 pub async fn watch_socket(
     ws: WebSocketUpgrade,
+    connecting: Connecting,
     axum::extract::State(state): axum::extract::State<AppState>,
 ) -> Response {
-    ws.on_upgrade(move |socket| handle_watch_socket(socket, state))
+    ws.on_upgrade(move |socket| handle_watch_socket(socket, state, connecting))
 }
 
-async fn handle_watch_socket(mut socket: WebSocket, state: AppState) {
-    let conn = next_conn();
+async fn handle_watch_socket(mut socket: WebSocket, app: AppState, connecting: Connecting) {
+    let Connecting { identity, conn } = connecting;
 
-    let Some(handles) = state.watch.handles() else {
+    let Some(handles) = app.watch.handles() else {
         close_restarting(&mut socket).await;
         return;
     };
@@ -241,6 +243,8 @@ async fn handle_watch_socket(mut socket: WebSocket, state: AppState) {
                 msg = socket.recv() => match msg {
                     Some(Ok(Message::Text(text))) => {
                         match serde_json::from_str::<WatchWire>(text.as_str()) {
+                            Ok(_) if !identity.may_play() => {}
+                            Ok(WatchWire::ClaimPresenter) if !identity.may_present() => {}
                             Ok(WatchWire::ClaimPresenter) => {
                                 if cmd_tx.send(WatchMsg::Claim { conn }).await.is_err() {
                                     close_restarting(&mut socket).await;
@@ -327,6 +331,7 @@ async fn handle_watch_socket(mut socket: WebSocket, state: AppState) {
         }
     }
     let _ = cmd_tx.send(WatchMsg::ReleasePresenter { conn }).await;
+    release(&app, &identity);
 }
 
 async fn close_restarting(socket: &mut WebSocket) {

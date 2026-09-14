@@ -4,7 +4,8 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
 use crate::protocol::{ButtonEvent, ButtonState, ButtonWire, Color};
-use crate::server::{send_json, AppState};
+use crate::server::auth::Connecting;
+use crate::server::{release, send_json, AppState};
 use crate::sim::ButtonSim;
 
 pub enum ButtonMsg {
@@ -86,13 +87,17 @@ pub async fn backend(
 
 pub async fn button_socket(
     ws: WebSocketUpgrade,
+    connecting: Connecting,
     axum::extract::State(state): axum::extract::State<AppState>,
 ) -> Response {
-    ws.on_upgrade(move |socket| handle_button_socket(socket, state))
+    ws.on_upgrade(move |socket| handle_button_socket(socket, state, connecting))
 }
 
-async fn handle_button_socket(mut socket: WebSocket, state: AppState) {
-    let Some(handles) = state.button.handles() else {
+async fn handle_button_socket(mut socket: WebSocket, app: AppState, connecting: Connecting) {
+    let Connecting { identity, conn: _ } = connecting;
+
+    let Some(handles) = app.button.handles() else {
+        release(&app, &identity);
         close_restarting(&mut socket).await;
         return;
     };
@@ -104,6 +109,7 @@ async fn handle_button_socket(mut socket: WebSocket, state: AppState) {
         .await
         .is_err()
     {
+        release(&app, &identity);
         close_restarting(&mut socket).await;
         return;
     }
@@ -120,6 +126,7 @@ async fn handle_button_socket(mut socket: WebSocket, state: AppState) {
         .await
         .is_err()
     {
+        release(&app, &identity);
         return;
     }
 
@@ -128,6 +135,11 @@ async fn handle_button_socket(mut socket: WebSocket, state: AppState) {
             msg = socket.recv() => match msg {
                 Some(Ok(Message::Text(text))) => {
                     if let Ok(wire) = serde_json::from_str::<ButtonWire>(text.as_str()) {
+                        // spectators watch the future resolve; they do not
+                        // get to be the I/O that resolves it
+                        if !identity.may_play() {
+                            continue;
+                        }
                         let msg = match wire {
                             ButtonWire::Activate => ButtonMsg::Activate,
                             ButtonWire::Press { color } => ButtonMsg::Press { color },
@@ -156,6 +168,8 @@ async fn handle_button_socket(mut socket: WebSocket, state: AppState) {
             },
         }
     }
+
+    release(&app, &identity);
 }
 
 async fn resync(socket: &mut WebSocket, cmd_tx: &mpsc::Sender<ButtonMsg>) {

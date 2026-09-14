@@ -11,7 +11,8 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
 use crate::protocol::{BroadcastEvent, BroadcastSnapshot, BroadcastWire};
-use crate::server::{next_conn, send_json, AppState, DEAD_PEER_TIMEOUT};
+use crate::server::auth::Connecting;
+use crate::server::{release, send_json, AppState, DEAD_PEER_TIMEOUT};
 use crate::sim::BroadcastSim;
 
 pub enum BroadcastMsg {
@@ -140,15 +141,16 @@ pub async fn backend(
 
 pub async fn broadcast_socket(
     ws: WebSocketUpgrade,
+    connecting: Connecting,
     axum::extract::State(state): axum::extract::State<AppState>,
 ) -> Response {
-    ws.on_upgrade(move |socket| handle_broadcast_socket(socket, state))
+    ws.on_upgrade(move |socket| handle_broadcast_socket(socket, state, connecting))
 }
 
-async fn handle_broadcast_socket(mut socket: WebSocket, state: AppState) {
-    let conn = next_conn();
+async fn handle_broadcast_socket(mut socket: WebSocket, app: AppState, connecting: Connecting) {
+    let Connecting { identity, conn } = connecting;
 
-    let Some(handles) = state.broadcast.handles() else {
+    let Some(handles) = app.broadcast.handles() else {
         close_restarting(&mut socket).await;
         return;
     };
@@ -205,6 +207,12 @@ async fn handle_broadcast_socket(mut socket: WebSocket, state: AppState) {
                         // every wire here is connection-scoped: the actor
                         // rejects foreign handles/receivers
                         let msg = match serde_json::from_str::<BroadcastWire>(text.as_str()) {
+                            // Spectators are present but handle-less: they
+                            // watch the fan-out without being part of it.
+                            Ok(_) if !identity.may_play() => None,
+                            // The presenter slot is granted by the server,
+                            // not asked for by the client.
+                            Ok(BroadcastWire::ClaimPresenter) if !identity.may_present() => None,
                             Ok(BroadcastWire::Send { conn: sender, ch }) => {
                                 // ownership is enforced by the sim (owner ==
                                 // requester); unknown handles are ignored
@@ -261,6 +269,7 @@ async fn handle_broadcast_socket(mut socket: WebSocket, state: AppState) {
 
     // dropping the connection drops its senders and its receiver
     let _ = cmd_tx.send(BroadcastMsg::DropConnection { conn }).await;
+    release(&app, &identity);
 }
 
 async fn close_restarting(socket: &mut WebSocket) {

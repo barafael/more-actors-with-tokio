@@ -10,7 +10,8 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
 use crate::protocol::{MpscEvent, MpscSnapshot, MpscWire, MPSC_FLIGHT_MS};
-use crate::server::{next_conn, send_json, AppState, DEAD_PEER_TIMEOUT};
+use crate::server::auth::Connecting;
+use crate::server::{next_conn, release, send_json, AppState, DEAD_PEER_TIMEOUT};
 use crate::sim::{now_ms, MpscSim};
 
 pub enum MpscMsg {
@@ -169,15 +170,16 @@ pub async fn backend(
 
 pub async fn mpsc_socket(
     ws: WebSocketUpgrade,
+    connecting: Connecting,
     axum::extract::State(state): axum::extract::State<AppState>,
 ) -> Response {
-    ws.on_upgrade(move |socket| handle_mpsc_socket(socket, state))
+    ws.on_upgrade(move |socket| handle_mpsc_socket(socket, state, connecting))
 }
 
-async fn handle_mpsc_socket(mut socket: WebSocket, state: AppState) {
-    let conn = next_conn();
+async fn handle_mpsc_socket(mut socket: WebSocket, app: AppState, connecting: Connecting) {
+    let Connecting { identity, conn } = connecting;
 
-    let Some(handles) = state.mpsc.handles() else {
+    let Some(handles) = app.mpsc.handles() else {
         close_restarting(&mut socket).await;
         return;
     };
@@ -243,6 +245,12 @@ async fn handle_mpsc_socket(mut socket: WebSocket, state: AppState) {
                     Some(Ok(Message::Text(text))) => {
                         last_seen = Instant::now();
                         match serde_json::from_str::<MpscWire>(text.as_str()) {
+                            // Spectators are present but handle-less: they
+                            // watch the channel without being a sender.
+                            Ok(_) if !identity.may_play() => {}
+                            // The presenter slot is granted by the server,
+                            // not asked for by the client.
+                            Ok(MpscWire::ClaimPresenter) if !identity.may_present() => {}
                             Ok(MpscWire::CloneSender { .. }) => {
                                 let (reply_tx, reply_rx) = oneshot::channel();
                                 if cmd_tx
@@ -316,6 +324,7 @@ async fn handle_mpsc_socket(mut socket: WebSocket, state: AppState) {
     for conn in owned {
         let _ = cmd_tx.send(MpscMsg::RemoveSender { conn }).await;
     }
+    release(&app, &identity);
 }
 
 async fn close_restarting(socket: &mut WebSocket) {

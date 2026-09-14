@@ -9,7 +9,7 @@ mod state;
 
 use dioxus::prelude::*;
 
-use crate::games::{is_desktop, use_game_connection, GameConnection};
+use crate::games::{use_game_connection, GameConnection};
 use crate::protocol::{RxInfo, WatchEvent, WatchSnapshot, WatchWire, WATCH_MAX_RX};
 use crate::sim::{WatchSim, LOCAL_CONN};
 use crate::{AppCtx, GameMode};
@@ -123,7 +123,7 @@ pub fn WatchGame() -> Element {
     // The presenter slot gates Create/Send server-side; desktop clients claim
     // it, last claim wins.
     use_effect(move || {
-        if conn.connected() && !conn.is_local() && my_conn().is_some() && is_desktop() {
+        if conn.connected() && !conn.is_local() && my_conn().is_some() && ctx.may_present() {
             conn.send(&WatchWire::ClaimPresenter);
         }
     });
@@ -310,10 +310,12 @@ pub fn WatchGame() -> Element {
                         span { class: "note-pill", "{receivers().len()} receiver(s)" }
                     }
                 }
-                button {
-                    class: "btn desktop-only",
-                    onclick: move |_| restart(conn, ctx, sim, chan),
-                    "restart"
+                if ctx.may_present() {
+                    button {
+                        class: "btn",
+                        onclick: move |_| restart(conn, ctx, sim, chan),
+                        "restart"
+                    }
                 }
             }
         }

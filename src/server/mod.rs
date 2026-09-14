@@ -4,14 +4,18 @@ use axum::response::Response;
 use tokio::sync::{mpsc as tokio_mpsc, watch as tokio_watch};
 
 use crate::protocol::{AppDown, AppUp, Game, SLIDE_COUNT};
+use crate::server::auth::{Connecting, Joining};
 use crate::server::broadcast::BroadcastHandles;
 use crate::server::button::ButtonHandles;
 use crate::server::mpsc::MpscHandles;
+use crate::server::tickets::Tickets;
 use crate::server::watch::WatchHandles;
 
+pub mod auth;
 pub mod broadcast;
 pub mod button;
 pub mod mpsc;
+pub mod tickets;
 pub mod watch;
 
 /// Connection ids, unique across every game.
@@ -64,6 +68,8 @@ pub struct AppState(std::sync::Arc<Planes>);
 pub struct Planes {
     /// Current slide, with `watch` semantics: late joiners get the value.
     pub slide_tx: tokio_watch::Sender<usize>,
+    /// The player-ticket pool: who in the room holds a handle.
+    pub tickets: Tickets,
     pub button: GamePlane<ButtonHandles>,
     pub mpsc: GamePlane<MpscHandles>,
     pub watch: GamePlane<WatchHandles>,
@@ -84,6 +90,7 @@ impl AppState {
         let (slide_tx, _slide_rx) = tokio_watch::channel(0usize);
         Self(std::sync::Arc::new(Planes {
             slide_tx,
+            tickets: Tickets::spawn(),
             button: plane(button::backend),
             mpsc: plane(mpsc::backend),
             watch: plane(watch::backend),
@@ -179,6 +186,7 @@ pub fn game_routes() -> axum::Router<AppState> {
 }
 
 pub fn serve_app() -> ! {
+    announce_presenter_key();
     dioxus::server::serve(|| async {
         // `with_state` resolves the state away so the result merges into the
         // dioxus router, which is stateless.
@@ -188,17 +196,50 @@ pub fn serve_app() -> ! {
     })
 }
 
-async fn app_socket(ws: WebSocketUpgrade, State(state): State<AppState>) -> Response {
-    ws.on_upgrade(move |socket| handle_app_socket(socket, state))
+async fn app_socket(
+    ws: WebSocketUpgrade,
+    Joining(connecting): Joining,
+    State(state): State<AppState>,
+) -> Response {
+    ws.on_upgrade(move |socket| handle_app_socket(socket, state, connecting))
 }
 
-async fn handle_app_socket(mut socket: WebSocket, state: AppState) {
-    let mut slide_rx = state.slide_tx.subscribe();
+/// Build the app-plane payload for one connection.
+///
+/// `granted_ticket` is only worth sending once — on the first push, when the
+/// client may not have one yet. The join URL is presenter-only: putting it
+/// in every payload would hand the audience the address to share onward.
+async fn app_down(
+    state: &AppState,
+    slide: usize,
+    identity: &auth::Identity,
+    include_ticket: bool,
+) -> AppDown {
+    let headcount = state.tickets.headcount().await;
+    AppDown {
+        slide,
+        role: identity.role,
+        seat: identity.seat,
+        granted_ticket: if include_ticket {
+            identity.ticket.clone()
+        } else {
+            None
+        },
+        players_present: headcount.present,
+        players_capacity: headcount.capacity,
+        join_url: identity.may_present().then(join_url).flatten(),
+    }
+}
 
-    let down = AppDown {
-        slide: *slide_rx.borrow_and_update(),
-    };
+async fn handle_app_socket(mut socket: WebSocket, state: AppState, connecting: Connecting) {
+    let Connecting { identity, conn } = connecting;
+    tracing::info!(conn, role = identity.role.label(), seat = ?identity.seat, "app socket");
+
+    let mut slide_rx = state.slide_tx.subscribe();
+    let slide = *slide_rx.borrow_and_update();
+    let down = app_down(&state, slide, &identity, true).await;
     if send_json(&mut socket, &down).await.is_err() {
+        release(&state, &identity);
         return;
     }
 
@@ -208,15 +249,25 @@ async fn handle_app_socket(mut socket: WebSocket, state: AppState) {
                 if changed.is_err() {
                     break;
                 }
-                let down = AppDown {
-                    slide: *slide_rx.borrow_and_update(),
-                };
+                let slide = *slide_rx.borrow_and_update();
+                let down = app_down(&state, slide, &identity, false).await;
                 if send_json(&mut socket, &down).await.is_err() {
                     break;
                 }
             }
             msg = socket.recv() => match msg {
                 Some(Ok(Message::Text(text))) => match serde_json::from_str::<AppUp>(text.as_str()) {
+                    // Every branch here drives the room, so every branch is
+                    // presenter-only. The client hides these controls, but
+                    // hiding a button is not a check.
+                    Ok(command) if !identity.may_present() => {
+                        tracing::warn!(
+                            conn,
+                            role = identity.role.label(),
+                            ?command,
+                            "refusing a presenter command",
+                        );
+                    }
                     Ok(AppUp::AdvanceSlide) => {
                         state.slide_tx.send_modify(|slide| *slide = (*slide + 1) % SLIDE_COUNT);
                     }
@@ -233,7 +284,37 @@ async fn handle_app_socket(mut socket: WebSocket, state: AppState) {
             },
         }
     }
+
+    release(&state, &identity);
 }
+
+/// Hand this socket's ticket back to the pool. The seat itself survives:
+/// only the hold on it ends.
+fn release(state: &AppState, identity: &auth::Identity) {
+    if let Some(ticket) = identity.ticket.clone() {
+        state.tickets.release(ticket);
+    }
+}
+
+/// The address the audience scans, if it can be determined.
+///
+/// Read from the environment because the server cannot see the URL the room
+/// will use: behind fly's proxy the bound address is a private one, and the
+/// public hostname is deployment knowledge.
+fn join_url() -> Option<String> {
+    static URL: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    URL.get_or_init(|| {
+        std::env::var(JOIN_URL_ENV)
+            .ok()
+            .filter(|url| !url.is_empty())
+            .map(|url| url.trim_end_matches('/').to_string())
+    })
+    .clone()
+}
+
+/// Environment variable holding the public base URL of the deck, e.g.
+/// `https://more-actors-with-tokio.fly.dev`.
+pub const JOIN_URL_ENV: &str = "JOIN_URL";
 
 pub(crate) async fn send_json(
     socket: &mut WebSocket,
@@ -241,4 +322,44 @@ pub(crate) async fn send_json(
 ) -> Result<(), axum::Error> {
     let json = serde_json::to_string(value).expect("serialize message");
     socket.send(Message::text(json)).await
+}
+
+/// Make sure a presenter key exists, and tell the operator what it is.
+///
+/// Without this the safe default (no key configured, nobody may present)
+/// would lock the presenter out of their own talk with no way in. Generating
+/// one keeps the default safe *and* usable: the room cannot present, the
+/// person reading the logs can.
+fn announce_presenter_key() {
+    if auth::presenter_key().is_some() {
+        tracing::info!("presenter key read from {}", auth::PRESENTER_KEY_ENV);
+        return;
+    }
+
+    // Set it before the first read so `presenter_key`'s cache picks it up.
+    let generated = format!("{:016x}", fastrand_u64());
+    std::env::set_var(auth::PRESENTER_KEY_ENV, &generated);
+
+    match auth::presenter_key() {
+        Some(key) => tracing::warn!(
+            "no {} set; generated one for this run. present at /?{}={}",
+            auth::PRESENTER_KEY_ENV,
+            crate::protocol::PRESENTER_PARAM,
+            key,
+        ),
+        None => tracing::error!("could not install a generated presenter key"),
+    }
+}
+
+/// One random u64, without taking on a dependency for it.
+fn fastrand_u64() -> u64 {
+    use std::hash::{BuildHasher, Hasher};
+    let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+    hasher.write_u128(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_nanos())
+            .unwrap_or_default(),
+    );
+    hasher.finish()
 }

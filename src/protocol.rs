@@ -72,9 +72,24 @@ pub enum AppUp {
     Restart { game: Game },
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+/// The app plane's state, pushed on connect and on every change.
+///
+/// Carries the connection's decided identity: the client never assumes a
+/// role, it renders whatever the server granted.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AppDown {
     pub slide: usize,
+    pub role: Role,
+    /// 1-based seat number for a ticket holder.
+    pub seat: Option<usize>,
+    /// The ticket the server issued, when this connection arrived without
+    /// one. The client puts it in its URL so a reload keeps the seat.
+    pub granted_ticket: Option<String>,
+    /// Seats with a live socket right now, and the size of the pool.
+    pub players_present: usize,
+    pub players_capacity: usize,
+    /// The URL the QR code encodes; only sent to the presenter.
+    pub join_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -388,4 +403,67 @@ pub enum BroadcastEvent {
         receiver: u64,
         n: u64,
     },
+}
+
+// ---- tickets and the presenter slot ----
+
+/// How many audience members may hold a player ticket at once.
+///
+/// From CONCEPT.md: the room gets a fixed pool of handles, so "the channel
+/// is full" is a fact about the room rather than a number on a slide. Past
+/// this, joiners are seated as spectators.
+pub const PLAYER_TICKETS: usize = 24;
+
+/// The query parameter carrying a ticket across the app and game sockets.
+/// The QR code encodes a URL with this set.
+pub const TICKET_PARAM: &str = "t";
+
+/// The query parameter carrying the presenter secret.
+pub const PRESENTER_PARAM: &str = "k";
+
+/// What a connection is allowed to do, decided by the server at connect
+/// time and echoed to the client so the UI can match it.
+///
+/// The client never picks its own role: it presents whatever credentials it
+/// has in its URL and the server rules on them. Screen size decided this
+/// once; a media query is not an authorization check.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum Role {
+    /// No ticket: may watch, may not act. The default for anyone who opens
+    /// the URL without scanning.
+    #[default]
+    Spectator,
+    /// Holds one of the `PLAYER_TICKETS` handles: may play every game.
+    Player,
+    /// Presented the presenter secret: may play, drive slides, claim the
+    /// presenter slot in each game, and restart actors.
+    Presenter,
+}
+
+impl Role {
+    /// Whether this role may act in the minigames at all.
+    pub fn may_play(self) -> bool {
+        matches!(self, Role::Player | Role::Presenter)
+    }
+
+    /// Whether this role may drive the deck and the game control slots.
+    pub fn may_present(self) -> bool {
+        matches!(self, Role::Presenter)
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Role::Spectator => "spectator",
+            Role::Player => "player",
+            Role::Presenter => "presenter",
+        }
+    }
+}
+
+/// The credentials a client presents when opening any socket, read from its
+/// own URL. Absent fields simply mean "not claiming that".
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Credentials {
+    pub ticket: Option<String>,
+    pub presenter_key: Option<String>,
 }

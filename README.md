@@ -14,7 +14,9 @@ src/
   lib.rs        the deck: slides, routing, the two websocket planes
   slides.rs     each slide as an rsx component
   games/        one module per minigame (button, mpsc, watch, broadcast)
+                plus qr.rs, the join code the audience scans
   server/       one actor per game, supervised, behind axum State
+                auth.rs decides roles; tickets.rs is the seat pool
   sim.rs        game drivers: registries and cosmetics over the channel cores
   protocol.rs   the wire types shared by client and server
 crates/
@@ -34,14 +36,35 @@ state. Where the two disagree with tokio, tokio wins.
 ## Running it
 
 ```sh
-dx serve --platform web --fullstack
+PRESENTER_KEY=stagekey JOIN_URL=http://127.0.0.1:8080   dx serve --platform web --fullstack
 ```
 
-Then open <http://127.0.0.1:8080>. The desktop client claims the presenter
-slot; other browsers and phones join as players.
+Open <http://127.0.0.1:8080/?k=stagekey> to present, and plain
+<http://127.0.0.1:8080> for an audience phone. Press **`q`** on the
+presenter's deck for the fullscreen join code.
+
+Leave `PRESENTER_KEY` unset and the server generates one per run and logs
+it — safe by default, but it changes on every restart.
 
 Without the `--fullstack` flag you get the client alone, which runs every
 game single-player in the browser against the same sims.
+
+## Who may do what
+
+Three roles, decided by the server at connect time and carried by the
+connection. The client renders what its role allows; the server refuses
+everything else, so hiding a control is courtesy rather than enforcement.
+
+| Role | How you get it | May |
+|---|---|---|
+| Spectator | open the URL | watch |
+| Player | scan the QR (one of 24 tickets) | play every game |
+| Presenter | `?k=<PRESENTER_KEY>` | play, drive slides, restart actors |
+
+Tickets live in the phone's URL and survive a reload; a seat is only
+recycled 15 minutes after its last socket closes, so locking a screen does
+not cost someone their handle. See [DEPLOY.md](DEPLOY.md) for the
+operational detail.
 
 ## Tests
 
@@ -71,8 +94,13 @@ fallback if the network fails during it.
 
 See [DEPLOY.md](DEPLOY.md). Short version: `fly deploy` from this directory.
 
-## Known gap
+## Known gaps
 
-The presenter slot is not authenticated — any connection may claim it or
-advance slides. Fine on localhost; think before putting a public URL in
-front of a room.
+Tickets are unguessable but not cryptographic, and they are visible in the
+URL — someone reading a neighbour's screen could take their seat. The worst
+case is one audience member playing as another, which is the right amount
+of security for a conference game.
+
+The chapters before the channels (mutex hook, timer, select, loop-select,
+the watchdog actor) and after them (whiteboard, OOOP closer) are described
+in [CONCEPT.md](CONCEPT.md) but not built yet.

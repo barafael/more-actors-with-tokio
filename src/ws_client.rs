@@ -140,7 +140,7 @@ pub fn spawn_ws_loop(_path: &'static str, on_event: impl FnMut(WsEvent) + 'stati
 
 #[cfg(target_arch = "wasm32")]
 fn ws_url(path: &str) -> String {
-    if cfg!(debug_assertions) {
+    let base = if cfg!(debug_assertions) {
         format!("ws://127.0.0.1:8080{path}")
     } else {
         let location = web_sys::window().expect("window").location();
@@ -151,7 +151,40 @@ fn ws_url(path: &str) -> String {
         };
         let host = location.host().unwrap_or_default();
         format!("{scheme}://{host}{path}")
+    };
+
+    // Every socket presents the same credentials the page was opened with,
+    // so the server can rule on them once per connection. Without this a
+    // game socket would arrive anonymous and be seated as a spectator.
+    match credentials_query() {
+        Some(query) => format!("{base}?{query}"),
+        None => base,
     }
+}
+
+/// The credential parameters from this page's own URL, ready to append.
+///
+/// Read from `location.search` every time rather than cached: the deck
+/// rewrites the URL when the server grants a ticket, and sockets opened
+/// after that must carry the new one.
+#[cfg(target_arch = "wasm32")]
+fn credentials_query() -> Option<String> {
+    use crate::protocol::{PRESENTER_PARAM, TICKET_PARAM};
+
+    let search = web_sys::window()?.location().search().ok()?;
+    let mut kept: Vec<String> = Vec::new();
+    for pair in search.trim_start_matches('?').split('&') {
+        let Some((key, value)) = pair.split_once('=') else {
+            continue;
+        };
+        if value.is_empty() {
+            continue;
+        }
+        if key == TICKET_PARAM || key == PRESENTER_PARAM {
+            kept.push(format!("{key}={value}"));
+        }
+    }
+    (!kept.is_empty()).then(|| kept.join("&"))
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -193,4 +226,39 @@ fn open_websocket(url: &str, tx: futures_channel::mpsc::UnboundedSender<WsEvent>
     }
 
     RawSocket(ws)
+}
+
+/// Record a ticket the server just granted, by writing it into this page's
+/// URL without navigating.
+///
+/// The URL is the only place a ticket can live that survives a reload and
+/// is visible to every socket the page opens. It also means an attendee who
+/// bookmarks the page keeps their seat, which is the behaviour a phone
+/// browser makes people expect.
+pub fn remember_ticket(ticket: &str) {
+    #[cfg(target_arch = "wasm32")]
+    {
+        use crate::protocol::TICKET_PARAM;
+
+        let Some(window) = web_sys::window() else {
+            return;
+        };
+        let location = window.location();
+        let (Ok(pathname), Ok(search)) = (location.pathname(), location.search()) else {
+            return;
+        };
+        if search.contains(&format!("{TICKET_PARAM}=")) {
+            return;
+        }
+        let separator = if search.is_empty() { "?" } else { "&" };
+        let url = format!("{pathname}{search}{separator}{TICKET_PARAM}={ticket}");
+        if let Ok(history) = window.history() {
+            history
+                .replace_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some(&url))
+                .inspect_err(|_| tracing::warn!("could not record the ticket in the url"))
+                .ok();
+        }
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    let _ = ticket;
 }
