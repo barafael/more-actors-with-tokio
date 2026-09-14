@@ -62,7 +62,7 @@ everything else, so hiding a control is courtesy rather than enforcement.
 | Presenter | `?k=<PRESENTER_KEY>` | play, drive slides, restart actors |
 
 Tickets live in the phone's URL and survive a reload; a seat is only
-recycled 15 minutes after its last socket closes, so locking a screen does
+recycled 2 minutes after its last socket closes, so locking a screen does
 not cost someone their handle. See [DEPLOY.md](DEPLOY.md) for the
 operational detail.
 

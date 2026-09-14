@@ -139,8 +139,10 @@ Scanning the QR opens the deck, which takes one seat and writes the ticket
 into that phone's URL, so a reload or a dropped connection keeps the same
 seat.
 
-- A seat is released **15 minutes after its last socket closes**, not on
-  disconnect — a phone that locks its screen must not lose its handle.
+- A seat is released **2 minutes after its last socket closes**, not on
+  disconnect — a phone that locks its screen must not lose its handle. The
+  dead-peer window is 25s, so a backgrounded phone keeps its seat with room
+  to spare, while a closed tab frees one before the next chapter.
 - Once every seat is taken, later arrivals are seated as **spectators**:
   they see every game but cannot act. Their badge says so.
 - Only the page the QR points at hands out seats. Opening a game socket

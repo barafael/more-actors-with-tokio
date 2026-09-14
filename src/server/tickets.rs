@@ -23,8 +23,12 @@ use crate::protocol::{Role, PLAYER_TICKETS};
 ///
 /// Longer than `DEAD_PEER_TIMEOUT` on purpose: losing the socket is normal
 /// for a phone, losing the seat is not. A ticket is only recycled once its
-/// holder has plausibly left the room.
-const TICKET_TTL: Duration = Duration::from_secs(15 * 60);
+/// holder has plausibly stopped playing.
+///
+/// Short enough that a full room recovers within a demo: someone who closes
+/// the tab frees their handle before the next chapter, which matters more
+/// than protecting a seat for a person who has already left.
+const TICKET_TTL: Duration = Duration::from_secs(2 * 60);
 
 /// A ticket's secret. Opaque to everyone but the holder; possession is the
 /// whole proof, so it must be unguessable rather than sequential.
