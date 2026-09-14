@@ -1,4 +1,11 @@
+# Rust build artifacts
+/target
+
+# Generated static export: the html + main.css are tracked, the wasm and
+# asset bundles are large and rebuilt by `cargo run --bin export`.
+/export/wasm
+/export/assets
+
 node_modules/
-/target/
 *.log
 .DS_Store

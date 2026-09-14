@@ -520,7 +520,9 @@ impl<T> WatchCore<T> {
 
     /// Values of the parked sends, in FIFO commit order.
     pub fn pending_values(&self) -> impl Iterator<Item = &T> {
-        self.queue.iter().filter_map(|pending| pending.value.as_ref())
+        self.queue
+            .iter()
+            .filter_map(|pending| pending.value.as_ref())
     }
 
     /// Parked sends in queue order — the FIFO commit order.

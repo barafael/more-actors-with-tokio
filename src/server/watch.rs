@@ -5,7 +5,6 @@
 //! but a `borrow()` read guard blocks `send`, so the sim queues the send as
 //! `pending_send` until the last guard drops.
 
-
 use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
 use axum::response::Response;
 use tokio::sync::{broadcast, mpsc, oneshot};
@@ -179,7 +178,9 @@ pub async fn backend(
         let (evt_tx, _) = broadcast::channel(256);
         let events = evt_tx.clone();
         let task = tokio::spawn(async move {
-            WatchService::default().event_loop(cmd_rx, events, token).await;
+            WatchService::default()
+                .event_loop(cmd_rx, events, token)
+                .await;
         });
         (WatchHandles { cmd_tx, evt_tx }, task)
     })

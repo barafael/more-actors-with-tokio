@@ -129,7 +129,9 @@ pub async fn backend(
         let (evt_tx, _) = broadcast::channel(256);
         let events = evt_tx.clone();
         let task = tokio::spawn(async move {
-            BroadcastService::default().event_loop(cmd_rx, events, token).await;
+            BroadcastService::default()
+                .event_loop(cmd_rx, events, token)
+                .await;
         });
         (BroadcastHandles { cmd_tx, evt_tx }, task)
     })

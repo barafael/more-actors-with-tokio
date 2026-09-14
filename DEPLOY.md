@@ -6,22 +6,15 @@ The deck is a fullstack Dioxus app: a server that renders the slides and
 hosts the minigame actors, plus a wasm client the audience loads on their
 phones. `fly deploy` builds both from [Dockerfile](Dockerfile).
 
-## Deploy from the repo root
+## Deploy
 
 ```sh
-cd <repo root>          # NOT more-actors-with-tokio/
 fly deploy
 ```
 
-This matters. The build config lives at the repo root — [fly.toml](fly.toml)
-and [Dockerfile](Dockerfile) — and the Dockerfile copies from
-`more-actors-with-tokio/` itself. Run `fly deploy` (or `fly launch`) from
-inside the crate directory and fly writes a *second* `fly.toml` there,
-does not see the Dockerfile, and falls back to auto-detecting a Rust
-project. That failure mode is described under Troubleshooting below; it is
-the one to know about.
-
-If a stray `more-actors-with-tokio/fly.toml` exists, delete it.
+The crate sits at the repo root, next to [fly.toml](fly.toml) and
+[Dockerfile](Dockerfile), so there is only one place to run this from and
+only one config for fly to find. It was not always so — see Troubleshooting.
 
 ## First deploy
 
@@ -139,12 +132,19 @@ client and names it `more-actors-with-tokio`. Two tells in the log:
 
 - the binary is `/usr/local/bin/more-actors-with-tokio`, not `/app/server`,
   so the image did not come from this Dockerfile;
-- the validated config path is `more-actors-with-tokio/fly.toml`, not the
-  one at the repo root.
+- the validated config path was `more-actors-with-tokio/fly.toml` rather
+  than the repo-root one.
 
-Fix: deploy from the repo root, delete any stray `fly.toml` in the crate
-directory, and let the Dockerfile build the image. `src/main.rs` now
-fails with an explanation instead of a wasm panic if this recurs.
+This happened because the crate used to live in a `more-actors-with-tokio/`
+subdirectory. `fly launch`, run from in there, wrote its own Dockerfile and
+fly.toml beside the crate where the real ones at the repo root were not
+visible — and its Dockerfile ran a bare `cargo build --bin
+more-actors-with-tokio`, which is the client.
+
+Two changes make it hard to repeat: the crate is now at the repo root, so
+there is one obvious place for config; and `src/main.rs` fails with an
+explanation instead of a wasm panic if a client binary is ever run
+natively again.
 
 ### `flyctl deploy --image ...` deploys the wrong thing
 

@@ -14,13 +14,12 @@
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
-use more_actors_with_tokio::protocol::{
-    BroadcastError, BroadcastEvent, BroadcastWire,
-};
+use more_actors_with_tokio::protocol::{BroadcastError, BroadcastEvent, BroadcastWire};
 use tokio::net::TcpListener;
 use tokio_tungstenite::tungstenite::Message;
 
-type Socket = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+type Socket =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 /// Boot the game planes on an ephemeral port and return its address.
 async fn serve() -> String {
@@ -47,7 +46,10 @@ async fn send(socket: &mut Socket, wire: &BroadcastWire) {
 }
 
 /// Read events until one decodes to something `pick` accepts.
-async fn next_matching<T>(socket: &mut Socket, mut pick: impl FnMut(BroadcastEvent) -> Option<T>) -> T {
+async fn next_matching<T>(
+    socket: &mut Socket,
+    mut pick: impl FnMut(BroadcastEvent) -> Option<T>,
+) -> T {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     loop {
         let frame = tokio::time::timeout_at(deadline, socket.next())

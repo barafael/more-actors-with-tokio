@@ -96,7 +96,6 @@ struct RxView {
     text: &'static str,
 }
 
-
 #[component]
 pub fn WatchGame() -> Element {
     let ctx: AppCtx = use_context();

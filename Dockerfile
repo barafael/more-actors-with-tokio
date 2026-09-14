@@ -1,9 +1,5 @@
 # Build and run the fullstack talk app.
 #
-# The app crate lives in the `more-actors-with-tokio/` subdirectory; the
-# Cargo.toml at the repo root is an unrelated stray crate and is excluded by
-# .dockerignore.
-#
 # Layout matters at runtime: dioxus-server resolves its static assets as
 # `current_exe().parent()/public`, so the server binary and the `public`
 # directory must stay siblings in the final image.
@@ -22,8 +18,8 @@ WORKDIR /src
 # Warm the dependency cache on manifests alone, so editing src/ does not
 # refetch the whole tree on every deploy. `cargo fetch` only resolves the
 # graph, so stub sources are enough — no target needs to compile here.
-COPY more-actors-with-tokio/Cargo.toml more-actors-with-tokio/Cargo.lock ./
-COPY more-actors-with-tokio/crates/sim-channels/Cargo.toml crates/sim-channels/
+COPY Cargo.toml Cargo.lock ./
+COPY crates/sim-channels/Cargo.toml crates/sim-channels/
 RUN mkdir -p src crates/sim-channels/src \
     && echo 'fn main() {}' > src/main.rs \
     && echo '' > src/lib.rs \
@@ -31,7 +27,7 @@ RUN mkdir -p src crates/sim-channels/src \
     && cargo fetch --locked \
     && rm -rf src crates/sim-channels/src
 
-COPY more-actors-with-tokio/ .
+COPY . .
 
 # `--out-dir` pins the output path; without it the server binary carries a
 # content hash in its name and the COPY below could not name it. The binary

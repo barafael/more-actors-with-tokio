@@ -8,16 +8,15 @@ use std::sync::OnceLock;
 use std::time::Instant;
 
 use sim_channels::broadcast::{BroadcastCore, BroadcastPoll};
-use sim_channels::watch::{BorrowRelease, ChangePoll, SendOffer as WatchSendOffer, WatchCore};
 use sim_channels::mpsc::{MpscCore, RecvPoll, SendOffer, SendPoll};
 use sim_channels::oneshot::OneshotCore;
+use sim_channels::watch::{BorrowRelease, ChangePoll, SendOffer as WatchSendOffer, WatchCore};
 use sim_channels::WaiterId;
 
 use crate::protocol::{
     BroadcastError, BroadcastEvent, BroadcastSnapshot, BroadcastWire, BufferChar, ButtonEvent,
-    ButtonState, ButtonWire, MpscEvent, MpscSnapshot, MpscWire, RxInfo, RxState, SenderInfo,
-    Color, WatchEvent, WatchSnapshot, WatchWire, BROADCAST_CAPACITY, MPSC_CAPACITY,
-    WATCH_MAX_RX,
+    ButtonState, ButtonWire, Color, MpscEvent, MpscSnapshot, MpscWire, RxInfo, RxState, SenderInfo,
+    WatchEvent, WatchSnapshot, WatchWire, BROADCAST_CAPACITY, MPSC_CAPACITY, WATCH_MAX_RX,
 };
 
 /// Connection id used by the local (single-player) client.
@@ -1912,7 +1911,10 @@ mod differential_tests {
                     }
                 }
                 parked.retain(|waiter| {
-                    matches!(core.poll_send(*waiter), sim_channels::mpsc::SendPoll::Pending)
+                    matches!(
+                        core.poll_send(*waiter),
+                        sim_channels::mpsc::SendPoll::Pending
+                    )
                 });
                 if !moved {
                     break;

@@ -45,7 +45,12 @@ fn dispatch_local(mut sim: Signal<BroadcastSim>, chan: &ChannelState, wire: Broa
 
 /// Route a wire to the in-browser sim (single-player) or over the game
 /// socket. Every call site goes through here so the two modes cannot drift.
-fn dispatch(conn: GameConnection, sim: Signal<BroadcastSim>, chan: &ChannelState, wire: BroadcastWire) {
+fn dispatch(
+    conn: GameConnection,
+    sim: Signal<BroadcastSim>,
+    chan: &ChannelState,
+    wire: BroadcastWire,
+) {
     if conn.is_local() {
         dispatch_local(sim, chan, wire);
     } else {
