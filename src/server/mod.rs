@@ -227,7 +227,10 @@ async fn app_down(
         },
         players_present: headcount.present,
         players_capacity: headcount.capacity,
-        join_url: identity.may_present().then(join_url).flatten(),
+        join_url: identity
+            .may_present()
+            .then(|| join_url(identity.loopback_host.as_deref()))
+            .flatten(),
     }
 }
 
@@ -303,15 +306,22 @@ fn release(state: &AppState, identity: &auth::Identity) {
 /// Read from the environment because the server cannot see the URL the room
 /// will use: behind fly's proxy the bound address is a private one, and the
 /// public hostname is deployment knowledge.
-fn join_url() -> Option<String> {
-    static URL: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
-    URL.get_or_init(|| {
-        std::env::var(JOIN_URL_ENV)
-            .ok()
-            .filter(|url| !url.is_empty())
-            .map(|url| url.trim_end_matches('/').to_string())
-    })
-    .clone()
+fn join_url(loopback_host: Option<&str>) -> Option<String> {
+    let configured = std::env::var(JOIN_URL_ENV)
+        .ok()
+        .filter(|url| !url.is_empty())
+        .map(|url| url.trim_end_matches('/').to_string());
+    if configured.is_some() {
+        return configured;
+    }
+
+    // On a laptop the presenter is already browsing an address that
+    // reaches the server, so show that rather than nothing. A phone will
+    // not resolve `localhost`, but a local run has no audience anyway, and
+    // this makes `q` demonstrable without any configuration.
+    loopback_host
+        .filter(|host| !host.is_empty())
+        .map(|host| format!("http://{host}"))
 }
 
 /// Environment variable holding the public base URL of the deck, e.g.
@@ -338,10 +348,7 @@ pub(crate) async fn send_json(
 /// a secret from the audience, and the audience is not reading the server
 /// log.
 pub fn announce_presenter_key() {
-    // Read the environment directly, not through `presenter_key()`: that
-    // accessor caches on first read, so asking it whether a key exists
-    // would pin `None` and the generated one below would never take.
-    let configured = std::env::var(auth::PRESENTER_KEY_ENV).is_ok_and(|key| !key.is_empty());
+    let configured = auth::presenter_key().is_some();
 
     if !configured {
         let generated = format!("{:016x}", fastrand_u64());
@@ -353,7 +360,7 @@ pub fn announce_presenter_key() {
         return;
     };
 
-    let url = presenter_url(key);
+    let url = presenter_url(&key);
     if configured {
         tracing::info!(%url, "present here (key from {})", auth::PRESENTER_KEY_ENV);
     } else {
@@ -371,7 +378,7 @@ pub fn announce_presenter_key() {
 /// address, and a path is still enough to paste after a hostname.
 fn presenter_url(key: &str) -> String {
     let param = crate::protocol::PRESENTER_PARAM;
-    match join_url() {
+    match join_url(None) {
         Some(base) => format!("{base}/?{param}={key}"),
         None => format!("/?{param}={key}"),
     }

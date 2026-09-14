@@ -36,12 +36,22 @@ state. Where the two disagree with tokio, tokio wins.
 ## Running it
 
 ```sh
-PRESENTER_KEY=stagekey JOIN_URL=http://127.0.0.1:8080   dx serve --platform web --fullstack
+dx serve --platform web --fullstack
 ```
 
-Open <http://127.0.0.1:8080/?k=stagekey> to present, and plain
-<http://127.0.0.1:8080> for an audience phone. The server also logs the
-presenter URL on startup, so you can copy it out of the terminal.
+Open <http://127.0.0.1:8080> and you are the presenter: a connection from
+the machine running the server needs no key, because whoever is there
+already has the terminal. `q` shows a join code for that same address.
+
+To rehearse with a phone on the same wifi, give the audience a hostname
+they can reach and take the key yourself:
+
+```sh
+PRESENTER_KEY=stagekey JOIN_URL=http://192.168.1.10:8080   dx serve --platform web --fullstack
+```
+
+Then present at `?k=stagekey`; anything arriving by hostname is audience.
+The server logs the presenter URL on startup either way.
 
 Presenter keys:
 

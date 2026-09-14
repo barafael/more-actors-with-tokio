@@ -285,13 +285,11 @@ pub fn Deck(mode: GameMode, initial_slide: usize) -> Element {
             } }
             slides::Chrome { slide, awake }
             if showing_join() {
-                if let Some(url) = join {
-                    games::qr::JoinOverlay {
-                        url,
-                        players_present: identity.read().players_present,
-                        players_capacity: identity.read().players_capacity,
-                        on_close: move |_| showing_join.set(false),
-                    }
+                games::qr::JoinOverlay {
+                    url: join.clone(),
+                    players_present: identity.read().players_present,
+                    players_capacity: identity.read().players_capacity,
+                    on_close: move |_| showing_join.set(false),
                 }
             }
         }

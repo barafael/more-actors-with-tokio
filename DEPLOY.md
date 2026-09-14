@@ -103,8 +103,9 @@ Ranked by how much they preserve:
 
 ## The two secrets
 
-Both are environment variables. Neither has a safe default that is also
-usable, so set them explicitly.
+Both are environment variables. Set both for a deployment; a local run
+needs neither, because a loopback connection presents without a key and
+the join code falls back to the address you are already browsing.
 
 **`PRESENTER_KEY`** — whoever presents it may drive slides, claim the
 presenter slot in each game, and restart actors. Everyone else is refused

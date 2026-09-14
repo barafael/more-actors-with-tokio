@@ -1269,3 +1269,10 @@ strong {
     border-style: dotted;
     opacity: 0.75;
 }
+
+/* `q` with no JOIN_URL configured: explain, do not show an empty card. */
+.join-missing {
+    margin: 0;
+    font-size: 26px;
+    color: var(--color-foreground);
+}

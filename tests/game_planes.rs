@@ -26,10 +26,25 @@ type Socket =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 /// The presenter secret these tests present.
-///
-/// `presenter_key()` caches the environment on first read, so this must be
-/// set before any socket connects; every test goes through `serve`.
 const TEST_KEY: &str = "test-presenter-key";
+
+/// Serialises every test against the process-wide `PRESENTER_KEY`.
+///
+/// The variable is global but cargo runs these tests in threads, and one
+/// of them must clear it to prove the server generates its own. Scoping
+/// the lock to just the write is not enough — the clear would still land
+/// while another test's server is mid-handshake — so every test holds this
+/// for its whole body and they run one at a time. There are eight of them
+/// and they take under a second in total.
+///
+/// A tokio mutex rather than a std one: the guard is held across every
+/// await in a test body, which is exactly what a blocking mutex must not
+/// do. It also does not poison, so one failing test cannot cascade.
+static ENV: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+async fn env_guard() -> tokio::sync::MutexGuard<'static, ()> {
+    ENV.lock().await
+}
 
 /// Boot the game planes on an ephemeral port and return its address.
 async fn serve() -> String {
@@ -44,8 +59,24 @@ async fn serve() -> String {
     format!("ws://{addr}")
 }
 
+/// The `Host` these tests present.
+///
+/// Loopback connections present without a key (see `auth::is_loopback_host`),
+/// which is right for a laptop but would make every socket here a presenter
+/// and collapse the roles these tests exist to check. An audience phone
+/// reaches the deck by its public hostname, so that is what is modelled.
+const AUDIENCE_HOST: &str = "deck.example.test";
+
 async fn connect(base: &str, path: &str) -> Socket {
-    let (socket, _) = tokio_tungstenite::connect_async(format!("{base}{path}"))
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+
+    let mut request = format!("{base}{path}")
+        .into_client_request()
+        .expect("build request");
+    request
+        .headers_mut()
+        .insert("host", AUDIENCE_HOST.parse().expect("host header is valid"));
+    let (socket, _) = tokio_tungstenite::connect_async(request)
         .await
         .expect("connect");
     socket
@@ -150,6 +181,7 @@ async fn hello(socket: &mut Socket) -> u64 {
 /// A receiver that subscribes mid-stream must not be handed history.
 #[tokio::test]
 async fn broadcast_subscriber_starts_at_the_tail_over_the_wire() {
+    let _guard = env_guard().await;
     let base = serve().await;
 
     let mut presenter = connect_as_presenter(&base, "/ws/game/broadcast").await;
@@ -214,6 +246,7 @@ async fn broadcast_subscriber_starts_at_the_tail_over_the_wire() {
 /// only once they are drained does the receiver see Closed.
 #[tokio::test]
 async fn buffered_values_outlive_the_last_sender_over_the_wire() {
+    let _guard = env_guard().await;
     let base = serve().await;
 
     let mut presenter = connect_as_presenter(&base, "/ws/game/broadcast").await;
@@ -301,6 +334,7 @@ async fn buffered_values_outlive_the_last_sender_over_the_wire() {
 /// for the wrong reason.)
 #[tokio::test]
 async fn a_spectator_cannot_send() {
+    let _guard = env_guard().await;
     let base = serve().await;
 
     let (_seat, ticket) = take_ticket(&base).await;
@@ -351,6 +385,7 @@ async fn a_spectator_cannot_send() {
 /// refused, however convincing their client-side `is_desktop()` looks.
 #[tokio::test]
 async fn a_player_cannot_seize_the_presenter_slot() {
+    let _guard = env_guard().await;
     let base = serve().await;
 
     let mut presenter = connect_as_presenter(&base, "/ws/game/broadcast").await;
@@ -386,6 +421,7 @@ async fn a_player_cannot_seize_the_presenter_slot() {
 /// The pool is finite, and running out is a normal thing for a full room.
 #[tokio::test]
 async fn the_room_runs_out_of_tickets() {
+    let _guard = env_guard().await;
     use more_actors_with_tokio::protocol::PLAYER_TICKETS;
 
     let base = serve().await;
@@ -420,6 +456,7 @@ async fn the_room_runs_out_of_tickets() {
 /// anything real. The socket must also stay open.
 #[tokio::test]
 async fn the_keepalive_is_not_a_protocol_error() {
+    let _guard = env_guard().await;
     let base = serve().await;
 
     let mut app = connect_as_presenter(&base, "/ws/app").await;
@@ -468,6 +505,10 @@ async fn the_keepalive_is_not_a_protocol_error() {
 /// that is invisible until someone tries to advance a slide on stage.
 #[tokio::test]
 async fn a_generated_presenter_key_can_present() {
+    // Held for the whole test: clearing the variable would otherwise strip
+    // the key from every other test's server while they are mid-handshake.
+    let _guard = env_guard().await;
+
     // no PRESENTER_KEY in the environment: the server must generate one
     std::env::remove_var(PRESENTER_KEY_ENV);
     more_actors_with_tokio::server::announce_presenter_key();
@@ -495,4 +536,33 @@ async fn a_generated_presenter_key_can_present() {
     };
     let down: AppDown = serde_json::from_str(&text).expect("decode AppDown");
     assert_eq!(down.role, Role::Presenter, "the generated key must present");
+}
+
+/// Someone at the machine running the server presents without a key.
+///
+/// They already have the terminal, so a secret adds nothing and costs the
+/// common case: `dx serve`, open the page, and find a deck whose arrow
+/// keys do nothing. The audience is unaffected — they arrive by hostname,
+/// which is what every other test here models.
+#[tokio::test]
+async fn loopback_presents_without_a_key() {
+    let _guard = env_guard().await;
+    let base = serve().await;
+
+    // no `?k=`, and the default Host that tungstenite derives from the URL
+    let (socket, _) = tokio_tungstenite::connect_async(format!("{base}/ws/app"))
+        .await
+        .expect("connect");
+    let mut socket = socket;
+
+    let frame = tokio::time::timeout(Duration::from_secs(5), socket.next())
+        .await
+        .expect("payload before deadline")
+        .expect("stream open")
+        .expect("frame");
+    let Message::Text(text) = frame else {
+        panic!("expected a text frame, got {frame:?}");
+    };
+    let down: AppDown = serde_json::from_str(&text).expect("decode AppDown");
+    assert_eq!(down.role, Role::Presenter, "localhost presents");
 }

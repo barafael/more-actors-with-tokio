@@ -38,12 +38,12 @@ pub fn qr_svg(url: &str) -> Option<String> {
 /// Presenter-only, because `join_url` only reaches the presenter.
 #[component]
 pub fn JoinOverlay(
-    url: String,
+    url: Option<String>,
     players_present: usize,
     players_capacity: usize,
     on_close: EventHandler<()>,
 ) -> Element {
-    let svg = use_memo(use_reactive!(|url| qr_svg(&url)));
+    let svg = use_memo(use_reactive!(|url| url.as_deref().and_then(qr_svg)));
     let free = players_capacity.saturating_sub(players_present);
 
     rsx! {
@@ -51,21 +51,33 @@ pub fn JoinOverlay(
             class: "join-overlay",
             onclick: move |_| on_close.call(()),
             div { class: "join-card",
-                match svg() {
-                    Some(svg) => rsx! {
+                match (url.clone(), svg()) {
+                    (Some(url), Some(svg)) => rsx! {
                         div { class: "join-qr", dangerous_inner_html: "{svg}" }
+                        p { class: "join-url", "{url}" }
+                        p { class: "join-count",
+                            if free == 0 {
+                                "all {players_capacity} handles taken"
+                            } else {
+                                "{free} of {players_capacity} handles free"
+                            }
+                        }
                     },
-                    None => rsx! {
-                        p { class: "dim", "cannot render a code for this url" }
+                    // Say why rather than showing an empty box: without
+                    // JOIN_URL the server cannot know its own public
+                    // address, and a presenter pressing `q` to nothing has
+                    // no way to guess that.
+                    (None, _) => rsx! {
+                        p { class: "join-missing", "No join code" }
+                        p { class: "dim",
+                            "Set JOIN_URL to the address the audience should scan, "
+                            "then restart the server."
+                        }
                     },
-                }
-                p { class: "join-url", "{url}" }
-                p { class: "join-count",
-                    if free == 0 {
-                        "all {players_capacity} handles taken"
-                    } else {
-                        "{free} of {players_capacity} handles free"
-                    }
+                    (Some(url), None) => rsx! {
+                        p { class: "join-missing", "Cannot encode a code for this url" }
+                        p { class: "join-url", "{url}" }
+                    },
                 }
             }
         }

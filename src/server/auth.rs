@@ -15,20 +15,23 @@ use crate::server::tickets::Issue;
 /// Environment variable holding the presenter secret.
 pub const PRESENTER_KEY_ENV: &str = "PRESENTER_KEY";
 
-/// The presenter secret for this process, read once.
+/// The presenter secret for this process.
 ///
 /// Unset means nobody can present remotely. That is the safe default for a
 /// public URL, but it would also lock the presenter out of their own talk,
 /// so `serve_app` generates one at startup and logs it when the variable is
 /// missing.
-pub fn presenter_key() -> Option<&'static str> {
-    static KEY: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
-    KEY.get_or_init(|| {
-        std::env::var(PRESENTER_KEY_ENV)
-            .ok()
-            .filter(|k| !k.is_empty())
-    })
-    .as_deref()
+///
+/// Read fresh each time rather than cached. A `OnceLock` here pins whatever
+/// the *first* caller saw, so any read before startup — a test, a future
+/// health check — would lock in `None` and quietly disable presenting for
+/// the life of the process. That bug has already been written once; an
+/// environment lookup per websocket handshake is not worth risking it
+/// again.
+pub fn presenter_key() -> Option<String> {
+    std::env::var(PRESENTER_KEY_ENV)
+        .ok()
+        .filter(|key| !key.is_empty())
 }
 
 /// Whether a presented key matches the configured secret.
@@ -40,6 +43,39 @@ pub fn presenter_key_ok(presented: Option<&str>) -> bool {
         return false;
     };
     constant_time_eq(expected.as_bytes(), presented.as_bytes())
+}
+
+/// Whether a request came from the machine running the server.
+///
+/// Loopback presents without a key. Someone at `localhost` already has the
+/// terminal the server is logging to, so a secret adds nothing there and
+/// costs the common case dearly: run `dx serve`, open the page, and find
+/// an inert deck with no hint why.
+///
+/// Read from the `Host` header rather than the peer address because dioxus
+/// builds the server and does not wire up `ConnectInfo`. A spoofed `Host`
+/// is not a way in: fly's proxy rewrites it to the app's public hostname,
+/// so this cannot be true for an audience connection in a deployment.
+pub fn is_loopback_host(host: Option<&str>) -> bool {
+    let Some(host) = host else {
+        return false;
+    };
+    // A bare IPv6 literal is full of colons and carries no port, so only
+    // strip one when the host is bracketed or has a single colon — `::1`
+    // would otherwise split into `:` plus a "port" of `1`.
+    let bracketed = host.starts_with('[');
+    let name = match host.rsplit_once(':') {
+        Some((name, port))
+            if !port.is_empty()
+                && port.bytes().all(|byte| byte.is_ascii_digit())
+                && (bracketed || !name.contains(':')) =>
+        {
+            name
+        }
+        _ => host,
+    };
+    let name = name.trim_start_matches('[').trim_end_matches(']');
+    name.eq_ignore_ascii_case("localhost") || name == "127.0.0.1" || name == "::1"
 }
 
 fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
@@ -112,6 +148,12 @@ pub struct Identity {
     pub seat: Option<usize>,
     /// The ticket this socket is holding open, released when it closes.
     pub ticket: Option<String>,
+    /// The `Host` this connection arrived on, when it was a loopback one.
+    ///
+    /// Kept so a local run can offer a working join code without being
+    /// told its own address: the presenter is already browsing a URL that
+    /// reaches the server, and on a laptop that is the one to show.
+    pub loopback_host: Option<String>,
 }
 
 impl Identity {
@@ -146,7 +188,12 @@ async fn resolve(
     issue: Issue,
 ) -> Connecting {
     let credentials = credentials_from_query(parts.uri.query());
-    let presenter_ok = presenter_key_ok(credentials.presenter_key.as_deref());
+    let host = parts
+        .headers
+        .get(axum::http::header::HOST)
+        .and_then(|value| value.to_str().ok());
+    let loopback = is_loopback_host(host);
+    let presenter_ok = presenter_key_ok(credentials.presenter_key.as_deref()) || loopback;
     let claim = state
         .tickets
         .claim(credentials.ticket, issue, presenter_ok)
@@ -156,6 +203,7 @@ async fn resolve(
             role: claim.role,
             seat: claim.seat,
             ticket: claim.ticket,
+            loopback_host: loopback.then(|| host.unwrap_or_default().to_string()),
         },
         conn: crate::server::next_conn(),
     }
@@ -229,10 +277,51 @@ mod tests {
     }
 
     #[test]
-    fn no_configured_key_refuses_every_presenter_claim() {
-        // presenter_key() reads the process environment once, so this test
-        // asserts the branch that does not depend on it
+    fn nothing_presented_is_never_a_presenter() {
         assert!(!presenter_key_ok(None));
+    }
+
+    #[test]
+    fn loopback_hosts_are_recognised_with_and_without_a_port() {
+        for host in [
+            "localhost",
+            "localhost:8080",
+            "LOCALHOST:8080",
+            "127.0.0.1",
+            "127.0.0.1:8080",
+            "::1",
+            "[::1]:8080",
+        ] {
+            assert!(is_loopback_host(Some(host)), "{host} is loopback");
+        }
+    }
+
+    #[test]
+    fn public_hosts_are_not_loopback() {
+        for host in [
+            "more-actors-with-tokio.fly.dev",
+            "example.test:8080",
+            "192.168.1.4:8080",
+            "10.0.0.7",
+            // close enough to fool a `starts_with` or a `contains`
+            "localhost.example.test",
+            "notlocalhost",
+            "127.0.0.1.example.test",
+        ] {
+            assert!(!is_loopback_host(Some(host)), "{host} is not loopback");
+        }
+    }
+
+    #[test]
+    fn an_absent_host_is_not_loopback() {
+        assert!(!is_loopback_host(None));
+        assert!(!is_loopback_host(Some("")));
+    }
+
+    #[test]
+    fn a_non_numeric_suffix_is_not_stripped_as_a_port() {
+        // `localhost:evil` must not parse down to `localhost`
+        assert!(!is_loopback_host(Some("example.test:notaport")));
     }
 
     #[test]
