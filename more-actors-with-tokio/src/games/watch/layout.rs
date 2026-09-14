@@ -5,23 +5,24 @@
 use crate::protocol::RxInfo;
 
 /// Left edge of the fixed sender box, its vertical center and width, in %.
-pub const TX_LEFT: f64 = 8.0;
-pub const TX_W: f64 = 13.0;
-/// The presenter's send input sits right of the sender box.
-pub const TX_CTL_LEFT: f64 = 24.0;
+pub const TX_LEFT: f64 = 3.0;
+pub const TX_W: f64 = 11.0;
+/// The presenter's send input sits right of the sender box; it needs room
+/// for a text field and a button without reaching the cell.
+pub const TX_CTL_LEFT: f64 = 15.5;
 
-/// Shared channel cell center.
+/// Shared channel cell: the one slot the whole channel is built around.
 pub const CELL_LEFT: f64 = 36.0;
-pub const CELL_W: f64 = 10.0;
+pub const CELL_W: f64 = 15.0;
 pub const CELL_CY: f64 = 50.0;
 
-/// Receivers: a vertical list anchored to the right edge.
-pub const RX_RIGHT: f64 = 22.0;
-pub const RX_W: f64 = 12.0;
-pub const RX_LIST_TOP: f64 = 8.0;
-pub const RX_LIST_SPAN: f64 = 78.0;
-/// Every receiver's controls rest just left of the column.
-pub const RX_CTL_RIGHT: f64 = 40.0;
+/// Receivers: a vertical list of cards anchored to the right edge. Each
+/// card holds its own identity, state and controls, so nothing floats free
+/// to collide with the cell.
+pub const RX_RIGHT: f64 = 3.0;
+pub const RX_W: f64 = 40.0;
+pub const RX_LIST_TOP: f64 = 6.0;
+pub const RX_LIST_SPAN: f64 = 82.0;
 
 /// `(top, height)` of the i-th receiver out of n, in % of diagram height.
 pub fn rx_geometry(i: usize, n: usize) -> (f64, f64) {

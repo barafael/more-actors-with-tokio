@@ -37,6 +37,13 @@ impl ChannelState {
         self.snap.set(snap);
     }
 
+    /// A fresh monotonic key (flights and transient badges share it).
+    pub fn next_key(mut self) -> u64 {
+        let key = *self.key.read() + 1;
+        self.key.set(key);
+        key
+    }
+
     pub fn remove_flight(mut self, key: u64) {
         self.flights.with_mut(|f| f.retain(|fl| fl.key != key));
     }
@@ -69,6 +76,7 @@ impl ChannelState {
             | BroadcastEvent::SenderLeft { .. }
             | BroadcastEvent::ReceiverAdded { .. }
             | BroadcastEvent::ReceiverRemoved { .. }
+            | BroadcastEvent::SendRefused
             | BroadcastEvent::Evicted { .. }
             | BroadcastEvent::Received { .. }
             | BroadcastEvent::Lagged { .. } => None,

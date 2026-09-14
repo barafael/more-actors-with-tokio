@@ -371,6 +371,9 @@ pub enum BroadcastEvent {
         conn: u64,
         ch: char,
     },
+    /// `send` failed: a broadcast channel with no receivers left has nobody
+    /// to deliver to, so tokio hands the value back in `SendError`.
+    SendRefused,
     /// The oldest buffered value was evicted by a send.
     Evicted {
         ch: char,

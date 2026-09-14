@@ -179,10 +179,12 @@ pub fn MpscGame() -> Element {
                     .iter()
                     .find(|b| b.conn == s.conn)
                     .map(|pending| pending.ch);
+                // a value in hand outranks the handle's name: while a send
+                // is parked or in flight, the node shows what it is carrying
                 let label = queued
                     .or_else(|| flights.iter().find(|f| f.conn == s.conn).map(|f| f.ch))
                     .map(|ch| ch.to_string())
-                    .unwrap_or_else(|| "Sender".to_string());
+                    .unwrap_or_else(|| format!("tx #{}", s.conn));
                 NodeView {
                     sender: *s,
                     label,
@@ -305,7 +307,7 @@ fn SenderNode(node: NodeView) -> Element {
     rsx! {
         div {
             class: if s.blocked { "actor sender-node blocked" } else { "actor sender-node" },
-            style: "top: {node.top}%; height: {node.height}%; --c: {palette::sender_hex(s.conn)}; --fg: {palette::sender_text_color(s.conn)}; font-size: min(1.3rem, {node.height * 0.42}cqh);",
+            style: "top: {node.top}%; height: {node.height}%; --c: {palette::sender_hex(s.conn)}; --fg: {palette::sender_text_color(s.conn)};",
             title: title,
             "{node.label}"
         }

@@ -18,7 +18,9 @@ pub const CONTROLS_RIGHT: f64 = 82.5;
 /// `(top, height)` of the i-th sender out of n, in % of diagram height.
 pub fn sender_geometry(i: usize, n: usize) -> (f64, f64) {
     let row = SENDER_LIST_SPAN / n.max(1) as f64;
-    let h = row * 0.72;
+    // cap the height: with one sender the row is the whole column, and a
+    // single handle drawn as a full-height slab reads as a wall, not a node
+    let h = (row * 0.72).min(26.0);
     let top = SENDER_LIST_TOP + i as f64 * row + (row - h) / 2.0;
     (top, h)
 }

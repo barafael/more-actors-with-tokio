@@ -15,7 +15,7 @@ use crate::sim::{WatchSim, LOCAL_CONN};
 use crate::{AppCtx, GameMode};
 
 use crate::games::palette;
-use layout::{rx_center_x, rx_cy, rx_geometry, RX_CTL_RIGHT, RX_RIGHT, TX_CTL_LEFT, TX_LEFT, TX_W};
+use layout::{rx_center_x, rx_cy, rx_geometry, RX_RIGHT, TX_CTL_LEFT, TX_LEFT, TX_W};
 use state::{empty_snapshot, Flight, FlightKind, WatchState};
 
 fn local_sim() -> WatchSim {
@@ -96,15 +96,6 @@ struct RxView {
     text: &'static str,
 }
 
-#[derive(Clone, Copy, PartialEq)]
-struct CtlView {
-    id: u64,
-    cy: f64,
-    awaiting: bool,
-    borrowing: bool,
-    mine: bool,
-    can_clone: bool,
-}
 
 #[component]
 pub fn WatchGame() -> Element {
@@ -186,35 +177,21 @@ pub fn WatchGame() -> Element {
                 } else if r.awaiting {
                     "…".to_string()
                 } else {
-                    "Rx".to_string()
+                    // idle: the card already says which receiver this is
+                    String::new()
                 };
                 RxView {
                     rx: *r,
                     top,
                     height,
                     label,
-                    color: palette::sender_hex(r.owner),
-                    text: palette::sender_text_color(r.owner),
+                    // by receiver, not owner: a presenter holding four of
+                    // them would otherwise paint them all one colour
+                    color: palette::receiver_hex(r.id),
+                    text: palette::receiver_text_color(r.id),
                 }
             })
             .collect::<Vec<RxView>>()
-    });
-    let controls: Memo<Vec<CtlView>> = use_memo(move || {
-        let receivers = receivers();
-        receivers
-            .iter()
-            .map(|r| {
-                let mine = r.owner == my();
-                CtlView {
-                    id: r.id,
-                    cy: rx_cy(&receivers, r.id),
-                    awaiting: r.awaiting,
-                    borrowing: r.borrowing,
-                    mine,
-                    can_clone: can_create(),
-                }
-            })
-            .collect::<Vec<CtlView>>()
     });
 
     let value_label = use_memo(move || {
@@ -294,26 +271,13 @@ pub fn WatchGame() -> Element {
                 }
 
                 for node in nodes() {
-                    ReceiverNode {
+                    ReceiverCard {
                         key: "{node.rx.id}",
-                        style_top: node.top,
-                        style_height: node.height,
-                        label: node.label.clone(),
-                        color: node.color.clone(),
-                        text: node.text,
-                        awaiting: node.rx.awaiting,
-                        borrowing: node.rx.borrowing,
-                    }
-                }
-
-                for view in controls() {
-                    if view.mine || i_am_presenter() {
-                        ReceiverControls {
-                            key: "ctl-{view.id}",
-                            view: view,
-                            connected: connected,
-                            onaction: move |wire: WatchWire| dispatch(conn, sim, chan, wire),
-                        }
+                        node: node.clone(),
+                        connected: connected,
+                        operable: node.rx.owner == my() || i_am_presenter(),
+                        can_clone: can_create(),
+                        onaction: move |wire: WatchWire| dispatch(conn, sim, chan, wire),
                     }
                 }
 
@@ -357,79 +321,76 @@ pub fn WatchGame() -> Element {
     }
 }
 
+/// One receiver, drawn as a self-contained card: identity, what it is doing
+/// right now, and the buttons that operate it. Keeping the controls inside
+/// the card is what stops them colliding with the cell as receivers pile up.
 #[component]
-fn ReceiverNode(
-    style_top: f64,
-    style_height: f64,
-    label: String,
-    color: String,
-    text: &'static str,
-    awaiting: bool,
-    borrowing: bool,
+fn ReceiverCard(
+    node: RxView,
+    connected: bool,
+    operable: bool,
+    can_clone: bool,
+    onaction: EventHandler<WatchWire>,
 ) -> Element {
-    let class = if awaiting {
-        "actor rx-node awaiting"
-    } else if borrowing {
-        "actor rx-node borrowing"
+    let rx = node.rx;
+    let id = rx.id;
+    let class = if rx.awaiting {
+        "actor rx-card awaiting"
+    } else if rx.borrowing {
+        "actor rx-card borrowing"
     } else {
-        "actor rx-node"
+        "actor rx-card"
+    };
+    // what this receiver is doing, in the language of the API it models
+    let (state, state_class) = if rx.awaiting {
+        ("blocked in changed()", "rx-state blocked")
+    } else if rx.borrowing {
+        ("holding borrow()", "rx-state borrowing")
+    } else {
+        ("idle", "rx-state")
     };
     rsx! {
         div {
             class: class,
-            style: "top: {style_top}%; height: {style_height}%; right: {RX_RIGHT}%; --c: {color}; --fg: {text};",
-            {label}
-        }
-    }
-}
-
-#[component]
-fn ReceiverControls(view: CtlView, connected: bool, onaction: EventHandler<WatchWire>) -> Element {
-    let borrow_btn = if view.borrowing {
-        "drop borrow"
-    } else {
-        "look inside"
-    };
-    let await_btn = if view.awaiting {
-        "cancel"
-    } else {
-        "until change"
-    };
-    let rx = view.id;
-    rsx! {
-        div {
-            class: "rx-ctl",
-            style: "top: {view.cy}%; right: {RX_CTL_RIGHT}%;",
-            if view.mine {
-                button {
-                    class: "btn small",
-                    title: "changed(): block until the value differs from what you've seen",
-                    disabled: !connected,
-                    onclick: move |_| onaction.call(WatchWire::AwaitChange { rx }),
-                    {await_btn}
+            style: "top: {node.top}%; height: {node.height}%; right: {RX_RIGHT}%; --c: {node.color}; --fg: {node.text};",
+            div { class: "rx-id",
+                span { class: "rx-tag", "rx #{id}" }
+                span { class: "rx-seen", "seen v{rx.version}" }
+                span { class: state_class, {state} }
+            }
+            div { class: "rx-face", "{node.label}" }
+            div { class: "rx-btns",
+                if operable {
+                    button {
+                        class: "btn small",
+                        title: "changed(): block until the value differs from what this receiver has seen",
+                        disabled: !connected,
+                        onclick: move |_| onaction.call(WatchWire::AwaitChange { rx: id }),
+                        if rx.awaiting { "cancel" } else { "until change" }
+                    }
+                    button {
+                        class: "btn small await",
+                        title: "borrow(): hold a read guard on the value (blocks the sender)",
+                        disabled: !connected,
+                        onclick: move |_| onaction.call(WatchWire::LookInside { rx: id }),
+                        if rx.borrowing { "drop borrow" } else { "look inside" }
+                    }
                 }
                 button {
-                    class: "btn small await",
-                    title: "borrow(): reveal the contained value while holding a read guard (blocks sending)",
-                    disabled: !connected,
-                    onclick: move |_| onaction.call(WatchWire::LookInside { rx }),
-                    {borrow_btn}
+                    class: "btn small clone",
+                    title: "clone this receiver (inherits the seen version, starts idle)",
+                    disabled: !connected || !can_clone,
+                    onclick: move |_| onaction.call(WatchWire::CloneReceiver { rx: id }),
+                    "clone"
                 }
-            }
-            button {
-                class: "btn small clone",
-                title: "clone this receiver (restarts awaiting)",
-                disabled: !connected || !view.can_clone,
-                onclick: move |_| onaction.call(WatchWire::CloneReceiver { rx }),
-                "clone"
-            }
-            if view.mine {
-                button {
-                    class: "btn small",
-                    title: "drop this receiver",
-                    disabled: !connected,
-                    onclick: move |_| onaction.call(WatchWire::DropReceiver { rx }),
-                    "drop"
+                if operable {
+                    button {
+                        class: "btn small",
+                        title: "drop this receiver",
+                        disabled: !connected,
+                        onclick: move |_| onaction.call(WatchWire::DropReceiver { rx: id }),
+                        "drop"
+                    }
                 }
             }
         }
