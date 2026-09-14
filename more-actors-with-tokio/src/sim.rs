@@ -814,7 +814,10 @@ impl BroadcastSim {
         // remember the value at risk of eviction before the send lands
         let oldest_before = self.core.ring().next().map(|(seq, value)| (seq, *value));
         if self.core.send(BufferChar { ch, conn }).is_err() {
-            return Vec::new();
+            // no receivers: the value comes straight back. Say so, or the
+            // game looks broken — the presenter presses send and nothing
+            // anywhere moves.
+            return vec![BroadcastEvent::SendRefused];
         }
         let mut events = vec![BroadcastEvent::InFlight { conn, ch }];
         // the ring's front moved on: the value it held was evicted
@@ -1759,6 +1762,28 @@ mod broadcast_tests {
         assert_eq!(sim.presenter(), Some(9));
         assert_eq!(sim.owner_of_sender(BROADCAST_HOST_CONN), Some(9));
         assert_eq!(sim.owned_senders(9), vec![BROADCAST_HOST_CONN]);
+    }
+
+    /// A send with no receivers fails, like tokio's. It used to return no
+    /// events at all, so the presenter pressed send and nothing anywhere
+    /// moved — the game looked broken rather than strict.
+    #[test]
+    fn send_without_receivers_is_refused_out_loud() {
+        let mut sim = BroadcastSim::new();
+        sim.handle(&BroadcastWire::ClaimPresenter, 1);
+        assert_eq!(
+            host_send(&mut sim, 1, 'a'),
+            vec![BroadcastEvent::SendRefused],
+            "the refusal is announced, not silent"
+        );
+        assert!(sim.snapshot().buffer.is_empty());
+
+        // with a receiver attached the same send lands
+        subscribe(&mut sim, 2);
+        let events = host_send(&mut sim, 1, 'a');
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, BroadcastEvent::InFlight { .. })));
     }
 
     /// Regression: closing used to be checked before the buffer, so a

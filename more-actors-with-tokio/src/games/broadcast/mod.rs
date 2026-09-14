@@ -130,10 +130,14 @@ pub fn BroadcastGame() -> Element {
         GameMode::Remote => None,
     });
     let drafts = use_signal(Vec::<(u64, char)>::new);
+    let mut badge = use_signal(|| None::<(String, u64)>);
 
     let conn = use_game_connection::<BroadcastEvent>("/ws/game/broadcast", move |event| {
         if let BroadcastEvent::Hello { conn } = event {
             my_conn.set(Some(conn));
+        } else if matches!(event, BroadcastEvent::SendRefused) {
+            let key = chan.next_key();
+            badge.set(Some(("no receivers — send failed".to_string(), key)));
         } else {
             #[cfg(not(target_arch = "wasm32"))]
             let _ = chan.apply(event);
@@ -143,6 +147,24 @@ pub fn BroadcastGame() -> Element {
                 spawn(async move {
                     gloo_timers::future::TimeoutFuture::new(1500).await;
                     chan.remove_flight(key);
+                });
+            }
+        }
+    });
+
+    // transient badges clear themselves shortly after appearing
+    use_effect(move || {
+        if let Some((_, _key)) = badge() {
+            #[cfg(target_arch = "wasm32")]
+            {
+                let mut badge = badge;
+                spawn(async move {
+                    gloo_timers::future::TimeoutFuture::new(1600).await;
+                    badge.with_mut(|b| {
+                        if b.as_ref().is_some_and(|(_, k)| *k == _key) {
+                            *b = None;
+                        }
+                    });
                 });
             }
         }
@@ -307,6 +329,9 @@ pub fn BroadcastGame() -> Element {
             div { class: "game-footer",
                 span { class: "note-pill occupancy",
                     "buffer {occupancy} / {BROADCAST_CAPACITY}"
+                }
+                if let Some((text, _key)) = badge() {
+                    span { class: "note-pill refused", {text} }
                 }
                 if closed() {
                     span { class: "note-pill blocked", "closed" }

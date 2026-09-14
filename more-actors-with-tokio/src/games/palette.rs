@@ -26,6 +26,17 @@ pub fn sender_text_color(conn: u64) -> &'static str {
     }
 }
 
+/// Receivers get their own colour per handle, not per owner: one presenter
+/// can hold several, and painting them all alike makes the fan-out
+/// unreadable. Offset so a receiver never matches the sender it listens to.
+pub fn receiver_hex(rx: u64) -> String {
+    sender_hex(rx.wrapping_add(3))
+}
+
+pub fn receiver_text_color(rx: u64) -> &'static str {
+    sender_text_color(rx.wrapping_add(3))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -34,6 +45,8 @@ mod tests {
     fn colors_are_stable_per_conn_and_cycle() {
         assert_eq!(sender_hex(0), sender_hex(10));
         assert_eq!(color_index(1), 1);
+        // receivers are distinguishable from each other
+        assert_ne!(receiver_hex(1), receiver_hex(2));
         assert_eq!(color_index(11), 1);
     }
 }

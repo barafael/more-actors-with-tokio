@@ -232,6 +232,12 @@ strong {
     background: var(--c, var(--color-green));
     color: var(--fg, #fff);
     transition: background-color 0.3s ease;
+    /* a lone sender is a tall box; its label must not grow with it */
+    font-size: clamp(13px, 2.4cqh, 19px);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    padding: 0 0.4rem;
 }
 
 .sender-node.blocked {
@@ -249,6 +255,25 @@ strong {
     gap: 4px;
     transform: translateY(-50%);
     z-index: 10;
+}
+
+/* every in-diagram text field: wide enough to see the char you typed */
+.diagram input[type="text"],
+.diagram input:not([type]) {
+    width: 3.2rem;
+    min-width: 3.2rem;
+    padding: 0.2rem 0.4rem;
+    font-family: var(--font-mono, "Fira Mono", monospace);
+    font-size: 0.95rem;
+    text-align: center;
+    border: 1.5px solid rgba(51, 51, 51, 0.45);
+    border-radius: 5px;
+    background: #fff;
+}
+
+.diagram input:focus-visible {
+    outline: 2px solid var(--color-orange, #eb5b20);
+    outline-offset: 1px;
 }
 
 .arrow-layer {
@@ -696,67 +721,164 @@ strong {
 
 /* little channel box the value lives in */
 .watch-cell {
-    top: 50%;
-    transform: translateY(-50%);
+    /* the cell is short and centred: it holds one value, not a list */
+    top: 38%;
+    height: 24%;
+    display: flex;
     flex-direction: column;
-    gap: 2px;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    padding: 0.3rem;
     background: #4a4a4a;
     border-color: #cfcfcf;
     color: #fff;
 }
 
 .cell-val {
-    font-size: 1.5rem;
+    font-family: var(--font-mono, "Fira Mono", monospace);
+    font-size: clamp(15px, 5cqh, 26px);
+    font-weight: bold;
     line-height: 1;
 }
 
 .cell-cap {
-    font-size: 0.5rem;
+    white-space: nowrap;
+    font-size: 10px;
     font-weight: normal;
-    letter-spacing: 0.05em;
+    letter-spacing: 0.04em;
     color: #cfcfcf;
 }
 
-/* receivers: a vertical list, right-anchored, each tinted by its owner */
-.rx-node {
-    width: 12%;
+/* receivers: a vertical list of self-contained cards, right-anchored. Each
+   card carries its own identity, state and controls, so nothing floats free
+   to collide with the cell as receivers pile up. */
+.note-pill.refused {
+    /* lift clear of the slide-nav pill that sits over the diagram's foot */
+    position: relative;
+    bottom: 2.2rem;
+    z-index: 20;
+    border-color: #c92a2a;
+    color: #c92a2a;
+    background: #fff5f5;
+    font-weight: bold;
+}
+
+.note-pill.refused {
+    /* lift clear of the slide-nav pill that sits over the diagram's foot */
+    position: relative;
+    bottom: 2.2rem;
+    z-index: 20;
+    border-color: #c92a2a;
+    color: #c92a2a;
+    background: #fff5f5;
+    font-weight: bold;
+}
+
+.rx-card {
+    width: 42%;
+    display: grid;
+    grid-template-columns: minmax(0, auto) 1fr auto;
+    grid-template-areas: "id face btns";
+    align-items: center;
+    justify-content: start;
+    gap: 0 0.6rem;
+    padding: 0.25rem 0.55rem;
     background: var(--c, #4a4a4a);
     color: var(--fg, #fff);
     border-color: var(--ink);
-    transition: background-color 0.3s ease;
+    overflow: hidden;
+    transition:
+        background-color 0.3s ease,
+        box-shadow 0.2s ease;
 }
 
-.rx-node.awaiting {
-    opacity: 0.5;
-    animation: rx-pulse 1.2s ease-in-out infinite;
+.rx-id {
+    grid-area: id;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    line-height: 1.2;
+    min-width: 0;
 }
 
-.rx-node.borrowing {
+.rx-tag {
+    font-family: var(--font-mono, "Fira Mono", monospace);
+    font-size: 13px;
+    font-weight: bold;
+    letter-spacing: 0.03em;
+    white-space: nowrap;
+}
+
+.rx-seen {
+    font-family: var(--font-mono, "Fira Mono", monospace);
+    font-size: 11px;
+    opacity: 0.8;
+    white-space: nowrap;
+}
+
+.rx-face {
+    grid-area: face;
+    justify-self: center;
+    font-family: var(--font-mono, "Fira Mono", monospace);
+    font-size: clamp(13px, 3.2cqh, 22px);
+    font-weight: bold;
+    line-height: 1;
+}
+
+.rx-state {
+    font-family: var(--font-mono, "Fira Mono", monospace);
+    font-size: 11px;
+    letter-spacing: 0.02em;
+    opacity: 0.85;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.rx-state.blocked {
+    opacity: 1;
+    font-weight: bold;
+    color: #ffe08a;
+}
+
+.rx-state.borrowing {
+    opacity: 1;
+    font-weight: bold;
+    color: #ffd0a8;
+}
+
+.rx-btns {
+    grid-area: btns;
+    display: flex;
+    align-items: center;
+    gap: 3px;
+}
+
+/* blocked in changed(): dashed edge + slow pulse, so "waiting" is legible
+   from the back of a room rather than a subtle opacity shift */
+.rx-card.awaiting {
+    border-style: dashed;
+    border-width: 2px;
+    box-shadow: 0 0 0 2px rgba(255, 224, 138, 0.5);
+    animation: rx-pulse 1.6s ease-in-out infinite;
+}
+
+.rx-card.borrowing {
     border-color: #e8590c;
     box-shadow: 0 0 0 2px #e8590c;
-    background: var(--c, #4a4a4a);
 }
 
 @keyframes rx-pulse {
     0%,
     100% {
-        opacity: 0.5;
+        box-shadow: 0 0 0 2px rgba(255, 224, 138, 0.35);
     }
     50% {
-        opacity: 1;
+        box-shadow: 0 0 0 5px rgba(255, 224, 138, 0.15);
     }
 }
 
-/* per-receiver controls right of the node, compact buttons */
-.rx-ctl {
-    position: absolute;
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    gap: 4px;
-    transform: translateY(-50%);
-    z-index: 10;
-}
 
 .btn.small {
     font-size: 11px;
@@ -811,14 +933,12 @@ strong {
 }
 
 @media (max-width: 700px) {
-    .rx-node {
-        width: 14%;
+    .rx-card {
+        width: 52%;
     }
 
-    .rx-ctl {
+    .rx-btns {
         gap: 2px;
-        transform: translateY(-50%) scale(0.85);
-        transform-origin: right center;
     }
 
     .tx-ctl {
