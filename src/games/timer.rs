@@ -9,7 +9,7 @@
 use dioxus::prelude::*;
 
 use crate::clock::{wall_now_ms, wall_offset_ms, Ticking};
-use crate::games::ticker::{subscribe, use_clock, use_local_tick};
+use crate::games::ticker::{subscribe, use_frame_clock, use_local_tick};
 use crate::games::{use_game_connection, GameConnection};
 use crate::protocol::{Game, TimerEvent, TimerSnapshot, TimerWire, TIMER_PERIOD_S};
 use crate::sim_timer::TimerSim;
@@ -25,6 +25,19 @@ fn apply(mut state: Signal<TimerSnapshot>, event: TimerEvent) {
     }
 }
 
+/// Republish the local sim's state, for the paths that changed it.
+///
+/// Local mode has no actor to broadcast a snapshot, so every mutation has to
+/// be followed by one of these or the change never reaches the screen.
+fn publish_local(sim: Signal<TimerSim>, state: Signal<TimerSnapshot>) {
+    apply(
+        state,
+        TimerEvent::Snapshot {
+            state: sim.read().snapshot(),
+        },
+    );
+}
+
 fn dispatch(
     conn: GameConnection,
     mut sim: Signal<TimerSim>,
@@ -36,12 +49,7 @@ fn dispatch(
             sim.sync_now(crate::sim::now_ms());
             sim.handle(&wire);
         });
-        apply(
-            state,
-            TimerEvent::Snapshot {
-                state: sim.read().snapshot(),
-            },
-        );
+        publish_local(sim, state);
     } else {
         conn.send(&wire);
     }
@@ -59,25 +67,24 @@ pub fn TimerGame() -> Element {
 
     // The dial must sweep between snapshots, so the clock runs in both
     // modes; only in local mode does it also resolve the future.
-    let clock = use_clock();
-    use_local_tick(sim, clock, move |event| apply(state, event));
+    let (clock, live) = use_frame_clock();
+    // A tick that produced events is the frame the future resolved on, and
+    // `apply` drops everything but snapshots — so republish there rather
+    // than relying on the guarded effect below, which by then sees an idle
+    // sim and skips.
+    use_local_tick(sim, clock, move |event| {
+        apply(state, event);
+        publish_local(sim, state);
+    });
 
-    // In local mode the snapshot is republished every frame so the dial and
-    // the countdown follow the clock rather than the last wire.
+    // While a future is pending, the countdown has to restate itself each
+    // frame. An idle sim has nothing to restate — the dial is drawn from the
+    // wall clock below and sweeps either way — so skip and avoid a re-render
+    // ten times a second for a screen that is not changing.
     use_effect(move || {
         subscribe(clock);
-        // Only while the future is actually counting down. The dial does not
-        // depend on this — it is drawn from the wall clock below, so it keeps
-        // sweeping either way — and an idle sim has no countdown to restate,
-        // so republishing its snapshot every frame would allocate and
-        // re-render for nothing.
         if mode == GameMode::Local && sim.peek().next_delay_ms().is_some() {
-            apply(
-                state,
-                TimerEvent::Snapshot {
-                    state: sim.read().snapshot(),
-                },
-            );
+            publish_local(sim, state);
         }
     });
 
@@ -91,15 +98,12 @@ pub fn TimerGame() -> Element {
     // `wall_ms` was true when it was taken, which is exactly the instant a
     // swept hand is least informative about.
     //
-    // Except during server-side rendering, which has no clock loop and must
-    // be byte-deterministic: two renders of the same slide have to agree, so
-    // there the hand parks at the top of the dial and the first frame in the
-    // browser moves it.
-    let wall_ms = if cfg!(target_arch = "wasm32") {
-        wall_now_ms()
-    } else {
-        0.0
-    };
+    // Until the frame loop is running, though, the hand parks at the top of
+    // the dial: a server-rendered first paint has to be reproducible (the
+    // export asserts two renders match) and has to match what the client
+    // draws when it hydrates. `live` is false in both of those renders and
+    // true from the first browser frame onward.
+    let wall_ms = if live() { wall_now_ms() } else { 0.0 };
 
     rsx! {
         div { class: "diagram timer-game",

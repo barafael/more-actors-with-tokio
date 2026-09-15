@@ -509,6 +509,26 @@ mod timer_tests {
     }
 
     #[test]
+    fn the_resolving_frame_is_the_one_that_stops_having_a_delay() {
+        // The local driver publishes a snapshot whenever a tick produced
+        // events, precisely because it cannot publish on "still pending":
+        // the deadline clears on the same frame the value appears.
+        let mut timer = TimerSim::new(0.0);
+        timer.sync_now(3_000.0);
+        timer.handle(&TimerWire::Activate);
+        assert!(timer.next_delay_ms().is_some(), "counting down");
+
+        let events = timer.tick(10_000.0);
+        assert_eq!(events, vec![TimerEvent::Resolved { waited_s: 7.0 }]);
+        assert_eq!(timer.next_delay_ms(), None, "and now reads as idle");
+        assert_eq!(
+            timer.snapshot().waited_s,
+            Some(7.0),
+            "so the value is only reachable via the frame that produced it",
+        );
+    }
+
+    #[test]
     fn polling_twice_at_the_same_instant_resolves_once() {
         // the idempotence the Ticking contract promises drivers
         let mut timer = timer();

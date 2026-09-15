@@ -112,6 +112,19 @@ fn apply_select(mut state: Signal<SelectSnapshot>, event: SelectEvent) {
     }
 }
 
+/// Republish the local sim's state, for the paths that changed it.
+///
+/// Local mode has no actor to broadcast a snapshot, so every mutation has to
+/// be followed by one of these or the change never reaches the screen.
+fn publish_select(sim: Signal<SelectSim>, state: Signal<SelectSnapshot>) {
+    apply_select(
+        state,
+        SelectEvent::Snapshot {
+            state: sim.read().snapshot(),
+        },
+    );
+}
+
 fn dispatch_select(
     conn: GameConnection,
     mut sim: Signal<SelectSim>,
@@ -123,14 +136,30 @@ fn dispatch_select(
             sim.sync_now(crate::sim::now_ms());
             sim.handle(&wire);
         });
-        apply_select(
-            state,
-            SelectEvent::Snapshot {
-                state: sim.read().snapshot(),
-            },
-        );
+        publish_select(sim, state);
     } else {
         conn.send(&wire);
+    }
+}
+
+/// Restart the select: a fresh actor remotely, a fresh sim locally.
+///
+/// Rebuilding rather than resetting in place is what makes the two modes
+/// agree. A remote restart respawns the actor, so anything the old one
+/// accumulated is gone; clearing in place would leave local state the
+/// presenter can see and the room cannot.
+fn restart_select(
+    conn: GameConnection,
+    ctx: AppCtx,
+    mut sim: Signal<SelectSim>,
+    mut state: Signal<SelectSnapshot>,
+) {
+    if conn.is_local() {
+        sim.set(SelectSim::new(wall_offset_ms()));
+        state.set(SelectSnapshot::default());
+        conn.set_status("single-player");
+    } else {
+        ctx.send(crate::AppUp::Restart { game: Game::Select });
     }
 }
 
@@ -146,18 +175,20 @@ pub fn SelectGame() -> Element {
     });
 
     let clock = use_clock();
-    use_local_tick(sim, clock, move |event| apply_select(state, event));
-    // Local mode republishes every frame so the countdown ticks down rather
-    // than jumping when a wire happens to arrive.
+    // A tick that produced events is the frame the timer branch won, and
+    // `apply_select` drops everything but snapshots — so republish here
+    // rather than leaving it to the guarded effect, which by then sees an
+    // unarmed sim and skips.
+    use_local_tick(sim, clock, move |event| {
+        apply_select(state, event);
+        publish_select(sim, state);
+    });
+    // While the race is live the countdown restates itself each frame; once
+    // it is decided there is nothing per-frame left to say.
     use_effect(move || {
         subscribe(clock);
         if mode == GameMode::Local && sim.peek().next_delay_ms().is_some() {
-            apply_select(
-                state,
-                SelectEvent::Snapshot {
-                    state: sim.read().snapshot(),
-                },
-            );
+            publish_select(sim, state);
         }
     });
 
@@ -199,13 +230,7 @@ pub fn SelectGame() -> Element {
                 if ctx.may_present() {
                     button {
                         class: "btn",
-                        onclick: move |_| {
-                            if conn.is_local() {
-                                dispatch_select(conn, sim, state, SelectWire::Reset);
-                            } else {
-                                ctx.send(crate::AppUp::Restart { game: Game::Select });
-                            }
-                        },
+                        onclick: move |_| restart_select(conn, ctx, sim, state),
                         "restart"
                     }
                 }
@@ -222,6 +247,16 @@ fn apply_loop(mut state: Signal<LoopSelectSnapshot>, event: LoopSelectEvent) {
     }
 }
 
+/// Republish the local sim's state, for the paths that changed it.
+fn publish_loop(sim: Signal<LoopSelectSim>, state: Signal<LoopSelectSnapshot>) {
+    apply_loop(
+        state,
+        LoopSelectEvent::Snapshot {
+            state: sim.read().snapshot(),
+        },
+    );
+}
+
 fn dispatch_loop(
     conn: GameConnection,
     mut sim: Signal<LoopSelectSim>,
@@ -233,14 +268,31 @@ fn dispatch_loop(
             sim.sync_now(crate::sim::now_ms());
             sim.handle(&wire);
         });
-        apply_loop(
-            state,
-            LoopSelectEvent::Snapshot {
-                state: sim.read().snapshot(),
-            },
-        );
+        publish_loop(sim, state);
     } else {
         conn.send(&wire);
+    }
+}
+
+/// Restart the loop: a fresh actor remotely, a fresh sim locally.
+///
+/// `Stop` + `Clear` is not the same thing — it empties the tape but keeps
+/// the round counter, so the badge would read "round 13" over an empty tape
+/// while a remote restart reads "round 1".
+fn restart_loop(
+    conn: GameConnection,
+    ctx: AppCtx,
+    mut sim: Signal<LoopSelectSim>,
+    mut state: Signal<LoopSelectSnapshot>,
+) {
+    if conn.is_local() {
+        sim.set(LoopSelectSim::new(wall_offset_ms()));
+        state.set(LoopSelectSnapshot::default());
+        conn.set_status("single-player");
+    } else {
+        ctx.send(crate::AppUp::Restart {
+            game: Game::LoopSelect,
+        });
     }
 }
 
@@ -256,19 +308,21 @@ pub fn LoopSelectGame() -> Element {
     });
 
     let clock = use_clock();
-    use_local_tick(sim, clock, move |event| apply_loop(state, event));
+    // A tick that produced events is a round completing, which the guarded
+    // effect below cannot publish: the loop re-arms within the same tick, so
+    // by the time it runs the round is already recorded but the snapshot it
+    // would send is the next race's.
+    use_local_tick(sim, clock, move |event| {
+        apply_loop(state, event);
+        publish_loop(sim, state);
+    });
     use_effect(move || {
         subscribe(clock);
         // `LoopSelectSnapshot::snapshot` clones the history tape, so an
         // unguarded republish is a heap allocation ten times a second for a
         // loop that is not running.
         if mode == GameMode::Local && sim.peek().next_delay_ms().is_some() {
-            apply_loop(
-                state,
-                LoopSelectEvent::Snapshot {
-                    state: sim.read().snapshot(),
-                },
-            );
+            publish_loop(sim, state);
         }
     });
 
@@ -326,14 +380,7 @@ pub fn LoopSelectGame() -> Element {
                 if ctx.may_present() {
                     button {
                         class: "btn",
-                        onclick: move |_| {
-                            if conn.is_local() {
-                                dispatch_loop(conn, sim, state, LoopSelectWire::Stop);
-                                dispatch_loop(conn, sim, state, LoopSelectWire::Clear);
-                            } else {
-                                ctx.send(crate::AppUp::Restart { game: Game::LoopSelect });
-                            }
-                        },
+                        onclick: move |_| restart_loop(conn, ctx, sim, state),
                         "restart"
                     }
                 }

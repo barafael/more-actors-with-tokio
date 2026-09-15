@@ -27,16 +27,37 @@ const FRAME_MS: u32 = 100;
 ///
 /// Call once per game component; the loop stops when the component unmounts.
 pub fn use_clock() -> Signal<f64> {
+    use_frame_clock().0
+}
+
+/// The clock, plus whether it has actually started ticking.
+///
+/// The flag is what separates "rendering on the server" from "running in the
+/// browser", and it has to be a runtime value rather than a
+/// `cfg!(target_arch)`: the live fullstack server renders the first paint
+/// natively and the wasm client then hydrates it, so a build-target check
+/// would have the two disagree — which is precisely the hydration mismatch
+/// it looks like it prevents. `use_future` does not poll during server
+/// rendering, so `live` is false exactly there.
+pub fn use_frame_clock() -> (Signal<f64>, Signal<bool>) {
     let mut clock = use_signal(now_ms);
+    let mut live = use_signal(|| false);
 
     use_future(move || async move {
         loop {
+            // Both flags flip only after a frame has elapsed. The client's
+            // first render has to reproduce the server's HTML exactly or
+            // hydration mismatches, so the sweep starts one frame late
+            // rather than on the render that adopts the DOM.
             sleep_ms(FRAME_MS).await;
+            if !live() {
+                live.set(true);
+            }
             clock.set(now_ms());
         }
     });
 
-    clock
+    (clock, live)
 }
 
 /// Drive a local (single-player) sim from the clock signal.
