@@ -196,11 +196,20 @@ impl SelectSim {
     /// dropped mid-flight.
     fn settle(&mut self, won: Won) -> Vec<SelectEvent> {
         self.winner = Some(won);
-        // cancel the loser, exactly as `select!` drops the branch it did not
-        // take: the timer stops counting, the button stops accepting presses
-        self.timer.handle(&TimerWire::Cancel);
-        self.timer.consume();
-        self.button = ButtonSim::new();
+        // Cancel the loser, exactly as `select!` drops the branch it did not
+        // take: the timer stops counting, the button stops accepting presses.
+        //
+        // Only the loser. A timer that won has just put its duration in
+        // `resolved`, and that value is what the slide exists to show —
+        // consuming it here would style the branch as the winner while
+        // rendering an empty one.
+        match won {
+            Won::Timer { .. } => self.button = ButtonSim::new(),
+            Won::Button { .. } => {
+                self.timer.handle(&TimerWire::Cancel);
+                self.timer.consume();
+            }
+        }
         vec![SelectEvent::Won { won }]
     }
 
@@ -294,6 +303,12 @@ pub struct LoopSelectSim {
     select: SelectSim,
     running: bool,
     history: Vec<SelectWinner>,
+    /// Rounds completed since the actor started.
+    ///
+    /// Kept alongside the tape rather than read off it: `SelectWinner.round`
+    /// is promised never to be reused (the client keys its list on it), and
+    /// emptying the tape must not restart the numbering.
+    rounds: u64,
 }
 
 impl Default for LoopSelectSim {
@@ -308,13 +323,15 @@ impl LoopSelectSim {
             select: SelectSim::new(epoch_offset_ms),
             running: false,
             history: Vec::new(),
+            rounds: 0,
         }
     }
 
     /// Record a completed round and go around again.
     fn record(&mut self, won: Won) -> Vec<LoopSelectEvent> {
+        self.rounds += 1;
         let entry = SelectWinner {
-            round: self.rounds() + 1,
+            round: self.rounds,
             won,
         };
         self.history.push(entry);
@@ -379,13 +396,9 @@ impl LoopSelectSim {
         }
     }
 
-    /// Rounds completed since the loop started or the tape was cleared.
-    ///
-    /// Read off the tape rather than counted alongside it: the newest entry
-    /// already carries its own round number, and a parallel counter would be
-    /// a second thing for `Clear` to remember to reset.
+    /// Rounds completed since the actor started.
     pub fn rounds(&self) -> u64 {
-        self.history.last().map_or(0, |entry| entry.round)
+        self.rounds
     }
 
     pub fn snapshot(&self) -> LoopSelectSnapshot {
@@ -612,10 +625,18 @@ mod select_tests {
         assert!(select
             .handle(&SelectWire::Press { color: Color::Blue })
             .is_empty());
+        let snapshot = select.snapshot();
         assert_eq!(
-            select.snapshot().winner,
+            snapshot.winner,
             Some(Won::Timer { waited_s: 10.0 }),
             "the first winner stands",
+        );
+        // The winning branch must still carry what it yielded: the slide
+        // styles it as the winner and then renders this value inside it.
+        assert_eq!(
+            snapshot.timer.waited_s,
+            Some(10.0),
+            "a winning timer keeps its duration",
         );
     }
 
@@ -768,6 +789,25 @@ mod loop_select_tests {
     }
 
     #[test]
+    fn clearing_the_tape_does_not_restart_round_numbering() {
+        // `SelectWinner.round` is promised never to be reused — the client
+        // keys its tape on it, and a repeated key lets Dioxus reuse a stale
+        // node — so emptying the tape must not reset the counter.
+        let mut looping = running();
+        looping.handle(&LoopSelectWire::Press { color: Color::Red });
+        looping.handle(&LoopSelectWire::Clear);
+        looping.handle(&LoopSelectWire::Press { color: Color::Blue });
+
+        let snapshot = looping.snapshot();
+        assert_eq!(snapshot.rounds, 2, "the counter survives the clear");
+        assert_eq!(
+            snapshot.history.first().map(|entry| entry.round),
+            Some(2),
+            "the round after a clear is numbered 2, not 1",
+        );
+    }
+
+    #[test]
     fn clearing_empties_the_tape_without_stopping_the_loop() {
         let mut looping = running();
         looping.tick(10_000.0);
@@ -777,7 +817,6 @@ mod loop_select_tests {
         );
         let snapshot = looping.snapshot();
         assert!(snapshot.history.is_empty());
-        assert_eq!(snapshot.rounds, 0);
         assert!(
             snapshot.running,
             "clearing the tape does not break the loop"

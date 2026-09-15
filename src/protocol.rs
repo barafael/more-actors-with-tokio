@@ -561,8 +561,11 @@ pub struct LoopSelectSnapshot {
     pub select: SelectSnapshot,
     /// The last `LOOP_SELECT_HISTORY` rounds, oldest first.
     pub history: Vec<SelectWinner>,
-    /// Rounds completed since the actor started (or since the tape was
-    /// cleared), which is also the newest round's number.
+    /// Rounds completed since the actor started, which is also the newest
+    /// round's number.
+    ///
+    /// Clearing the tape does not reset this: `SelectWinner.round` is the
+    /// client's list key and must never be reused.
     pub rounds: u64,
 }
 

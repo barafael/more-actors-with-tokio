@@ -66,9 +66,11 @@ pub fn TimerGame() -> Element {
     // the countdown follow the clock rather than the last wire.
     use_effect(move || {
         subscribe(clock);
-        // Only while the future is actually counting down: republishing an
-        // idle snapshot every frame allocates and re-renders for a screen
-        // that is not moving.
+        // Only while the future is actually counting down. The dial does not
+        // depend on this — it is drawn from the wall clock below, so it keeps
+        // sweeping either way — and an idle sim has no countdown to restate,
+        // so republishing its snapshot every frame would allocate and
+        // re-render for nothing.
         if mode == GameMode::Local && sim.peek().next_delay_ms().is_some() {
             apply(
                 state,
@@ -84,12 +86,19 @@ pub fn TimerGame() -> Element {
     // returned instant is the sim clock, which is not what the dial shows,
     // so it is deliberately only a subscription.
     subscribe(clock);
-    // In local mode the sim's own snapshot already carries the dial. In
-    // remote mode snapshots only arrive when something happens, so the hand
-    // is read off the wall clock and sweeps between them.
-    let wall_ms = match mode {
-        GameMode::Local => snapshot.wall_ms,
-        GameMode::Remote => wall_now_ms(),
+    // The hand comes off the wall clock so it sweeps continuously rather
+    // than moving only when a snapshot happens to arrive — a snapshot's own
+    // `wall_ms` was true when it was taken, which is exactly the instant a
+    // swept hand is least informative about.
+    //
+    // Except during server-side rendering, which has no clock loop and must
+    // be byte-deterministic: two renders of the same slide have to agree, so
+    // there the hand parks at the top of the dial and the first frame in the
+    // browser moves it.
+    let wall_ms = if cfg!(target_arch = "wasm32") {
+        wall_now_ms()
+    } else {
+        0.0
     };
 
     rsx! {
