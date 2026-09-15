@@ -3,6 +3,8 @@ use dioxus::prelude::*;
 use crate::games::broadcast::BroadcastGame;
 use crate::games::button::ButtonGame;
 use crate::games::mpsc::MpscGame;
+use crate::games::select::{LoopSelectGame, SelectGame};
+use crate::games::timer::TimerGame;
 use crate::games::watch::WatchGame;
 use crate::highlight::highlight;
 use crate::{protocol::SLIDE_COUNT, AppCtx, GameMode};
@@ -14,6 +16,44 @@ pub fn Title() -> Element {
             h1 { "Actors with Tokio" }
             h2 { "Live minigames" }
             p { class: "dim", "You are the senders." }
+        }
+    }
+}
+
+/// CONCEPT.md §2: the first future in the deck, and the first thing in the
+/// talk that happens without anyone in the room doing it.
+#[component]
+pub fn TimerGameSlide() -> Element {
+    rsx! {
+        div { class: "slide",
+            h2 { "A future that waits" }
+            p { class: "dim", "Awaiting it yields nothing until the seconds reach a multiple of ten — then it yields how long it waited. Nobody in this room makes that happen." }
+            TimerGame {}
+        }
+    }
+}
+
+/// CONCEPT.md §3: both futures, raced.
+#[component]
+pub fn SelectGameSlide() -> Element {
+    rsx! {
+        div { class: "slide",
+            h2 { "select!" }
+            p { class: "dim", "Two futures, awaited together. The first to complete wins and yields its value; the other is dropped mid-flight — never awaited, never resumed." }
+            SelectGame {}
+        }
+    }
+}
+
+/// CONCEPT.md §4: the race, forever. The last slide before an actor appears,
+/// and deliberately already shaped like one.
+#[component]
+pub fn LoopSelectGameSlide() -> Element {
+    rsx! {
+        div { class: "slide",
+            h2 { "The loop around the select" }
+            p { class: "dim", "Take the winner, go around again. A loop, a select, and state nothing outside the loop can reach — everything an actor is, except an inbox." }
+            LoopSelectGame {}
         }
     }
 }

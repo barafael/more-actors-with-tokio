@@ -1,9 +1,11 @@
+pub mod clock;
 pub mod games;
 pub mod highlight;
 pub mod protocol;
 #[cfg(feature = "server")]
 pub mod server;
 pub mod sim;
+pub mod sim_timer;
 pub mod slides;
 pub mod ws_client;
 
@@ -275,12 +277,19 @@ pub fn Deck(mode: GameMode, initial_slide: usize) -> Element {
             div { class: "topbar",
                 SeatBadge {}
             }
+            // CONCEPT.md's arc: futures first (a timer, then real I/O,
+            // then a race, then that race in a loop), which makes the actor
+            // recipe a summary rather than an introduction — and only then
+            // the channels that connect actors to each other.
             { match slide() {
                 0 => rsx! { slides::Title {} },
-                1 => rsx! { slides::ButtonGameSlide {} },
-                2 => rsx! { slides::MpscGameSlide {} },
-                3 => rsx! { slides::WatchGameSlide {} },
-                4 => rsx! { slides::Recipe {} },
+                1 => rsx! { slides::TimerGameSlide {} },
+                2 => rsx! { slides::ButtonGameSlide {} },
+                3 => rsx! { slides::SelectGameSlide {} },
+                4 => rsx! { slides::LoopSelectGameSlide {} },
+                5 => rsx! { slides::Recipe {} },
+                6 => rsx! { slides::MpscGameSlide {} },
+                7 => rsx! { slides::WatchGameSlide {} },
                 _ => rsx! { slides::BroadcastGameSlide {} },
             } }
             slides::Chrome { slide, awake }

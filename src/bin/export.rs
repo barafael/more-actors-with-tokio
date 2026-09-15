@@ -43,12 +43,18 @@ fn page(title: &str, body: &str) -> String {
 /// machinery expects a streaming queue to exist before the client boots.
 const STREAMING_INIT: &str = "window.hydrate_queue=[];window.dx_hydrate=(id,data,debug_types,debug_locations)=>{let decoded=atob(data),bytes=Uint8Array.from(decoded,(c)=>c.charCodeAt(0));if(window.hydration_callback)window.hydration_callback(id,bytes,debug_types,debug_locations);else window.hydrate_queue.push([id,bytes,debug_types,debug_locations])};";
 
+/// One name per slide, in deck order. The array is sized by `SLIDE_COUNT`,
+/// so adding a slide without naming it fails to compile rather than
+/// exporting a page called `slide-7-`.
 const SLIDE_NAMES: [&str; SLIDE_COUNT] = [
     "title",
+    "timer",
     "button-future",
+    "select",
+    "loop-select",
+    "recipe",
     "mpsc",
     "watch",
-    "recipe",
     "broadcast",
 ];
 

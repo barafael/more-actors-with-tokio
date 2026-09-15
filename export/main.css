@@ -1276,3 +1276,254 @@ strong {
     font-size: 26px;
     color: var(--color-foreground);
 }
+
+/* ---- the clock-driven games: timer, select, loop-select ---- */
+
+/* The timer dial. Centred in the diagram, with the period boundaries marked
+   so the audience can see the next deadline approaching rather than being
+   told about it after the fact. */
+
+.timer-game .timer-dial,
+.select-game .timer-dial {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -58%);
+}
+
+.dial-face {
+    fill: rgba(255, 248, 225, 0.9);
+    stroke: var(--ink);
+    stroke-width: 2;
+    transition: stroke 0.2s ease;
+}
+
+.dial-face.pending {
+    stroke: var(--color-highlight);
+    stroke-width: 3;
+}
+
+.dial-tick {
+    stroke: rgba(51, 51, 51, 0.45);
+    stroke-width: 2;
+    stroke-linecap: round;
+}
+
+.dial-hand {
+    stroke: var(--ink);
+    stroke-width: 3;
+    stroke-linecap: round;
+}
+
+.dial-hand.pending {
+    stroke: var(--color-highlight);
+}
+
+.dial-label {
+    font: bold 18px 'Fira Mono', monospace;
+    fill: var(--color-dimmed);
+}
+
+.timer-readout {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 52px;
+    display: flex;
+    justify-content: center;
+    z-index: 10;
+}
+
+.note-pill.pending {
+    color: var(--color-highlight);
+    border-color: var(--color-highlight);
+}
+
+.note-pill.resolved {
+    border-style: solid;
+    color: var(--color-green);
+    border-color: var(--color-green);
+}
+
+.note-pill.resolved.red {
+    color: var(--color-red);
+    border-color: var(--color-red);
+}
+
+.note-pill.resolved.green {
+    color: var(--color-green);
+    border-color: var(--color-green);
+}
+
+.note-pill.resolved.blue {
+    color: var(--color-blue);
+    border-color: var(--color-blue);
+}
+
+/* The race: two branches side by side with `select!` between them. Drawn
+   flat rather than as nodes-and-arrows, because the thing being taught is
+   that these are two *alternatives*, not two stages of a pipeline. */
+
+.race {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -60%);
+    display: flex;
+    align-items: center;
+    gap: 1.2rem;
+    z-index: 5;
+}
+
+.race-branch {
+    min-width: 190px;
+    padding: 0.9rem 1.1rem;
+    border: 2px dashed rgba(51, 51, 51, 0.35);
+    border-radius: 10px;
+    background: rgba(255, 248, 225, 0.75);
+    text-align: center;
+    transition: border-color 0.2s ease, opacity 0.2s ease;
+    opacity: 0.55;
+}
+
+/* Live: inside the select, being polled. */
+.race-branch.live {
+    opacity: 1;
+    border-style: solid;
+    border-color: var(--color-highlight);
+}
+
+/* Won: this is the branch the select took. The loser keeps the inert style,
+   which is the picture — it was dropped, not finished. */
+.race-branch.won {
+    opacity: 1;
+    border-style: solid;
+    border-color: var(--color-green);
+    background: rgba(46, 125, 50, 0.08);
+}
+
+.branch-head {
+    font: 600 13px 'Fira Mono', monospace;
+    color: var(--color-dimmed);
+    margin-bottom: 0.6rem;
+    white-space: nowrap;
+}
+
+.branch-body {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 0.5rem;
+    min-height: 44px;
+}
+
+.race-vs {
+    font: bold 15px 'Fira Mono', monospace;
+    color: var(--color-highlight);
+    white-space: nowrap;
+}
+
+.countdown {
+    font: bold 26px 'Fira Mono', monospace;
+    color: var(--color-highlight);
+}
+
+.countdown.done {
+    color: var(--color-green);
+}
+
+.countdown.idle {
+    color: var(--color-dimmed);
+}
+
+.race-result {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 52px;
+    display: flex;
+    justify-content: center;
+    z-index: 10;
+}
+
+/* The loop's tape of completed rounds, newest last. */
+
+.loop-select-game .race {
+    transform: translate(-50%, -78%);
+}
+
+.tape {
+    position: absolute;
+    left: 14px;
+    right: 14px;
+    bottom: 90px;
+    display: flex;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    z-index: 10;
+}
+
+.tape.empty {
+    color: var(--color-dimmed);
+}
+
+.tape-cell {
+    min-width: 52px;
+    padding: 4px 8px;
+    border: 2px solid var(--ink);
+    border-radius: 6px;
+    font: bold 13px 'Fira Mono', monospace;
+    text-align: center;
+    background: rgba(255, 248, 225, 0.9);
+}
+
+.tape-cell.timer {
+    border-color: var(--color-dimmed);
+    color: var(--color-dimmed);
+}
+
+.tape-cell.red {
+    border-color: var(--color-red);
+    color: var(--color-red);
+}
+
+.tape-cell.green {
+    border-color: var(--color-green);
+    color: var(--color-green);
+}
+
+.tape-cell.blue {
+    border-color: var(--color-blue);
+    color: var(--color-blue);
+}
+
+.round-badge {
+    margin-left: 8px;
+    padding: 1px 7px;
+    border-radius: 999px;
+    background: var(--color-highlight);
+    color: #fff;
+    font: 600 11px 'Fira Mono', monospace;
+}
+
+/* Phones get the race stacked: two 190px branches plus the gap overflow a
+   narrow screen, and a horizontally scrolling diagram is worse than a tall
+   one. */
+
+@media (max-width: 700px) {
+    .race {
+        flex-direction: column;
+        gap: 0.6rem;
+    }
+
+    .race-branch {
+        min-width: 150px;
+        padding: 0.6rem 0.8rem;
+    }
+
+    .timer-game .timer-dial,
+    .select-game .timer-dial {
+        transform: translate(-50%, -58%) scale(0.8);
+    }
+}

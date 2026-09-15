@@ -7,6 +7,7 @@ use crate::protocol::{AppDown, AppUp, Game, KEEPALIVE, SLIDE_COUNT};
 use crate::server::auth::{Connecting, Joining};
 use crate::server::broadcast::BroadcastHandles;
 use crate::server::button::ButtonHandles;
+use crate::server::futures_games::{LoopSelectHandles, SelectHandles, TimerHandles};
 use crate::server::mpsc::MpscHandles;
 use crate::server::tickets::Tickets;
 use crate::server::watch::WatchHandles;
@@ -14,8 +15,10 @@ use crate::server::watch::WatchHandles;
 pub mod auth;
 pub mod broadcast;
 pub mod button;
+pub mod futures_games;
 pub mod mpsc;
 pub mod tickets;
+pub mod ticking;
 pub mod watch;
 
 /// Connection ids, unique across every game.
@@ -70,7 +73,12 @@ pub struct Planes {
     pub slide_tx: tokio_watch::Sender<usize>,
     /// The player-ticket pool: who in the room holds a handle.
     pub tickets: Tickets,
+    /// The three clock-driven games (CONCEPT.md §2–§4), which resolve on
+    /// their own as well as on a wire.
+    pub timer: GamePlane<TimerHandles>,
     pub button: GamePlane<ButtonHandles>,
+    pub select: GamePlane<SelectHandles>,
+    pub loop_select: GamePlane<LoopSelectHandles>,
     pub mpsc: GamePlane<MpscHandles>,
     pub watch: GamePlane<WatchHandles>,
     pub broadcast: GamePlane<BroadcastHandles>,
@@ -91,7 +99,10 @@ impl AppState {
         Self(std::sync::Arc::new(Planes {
             slide_tx,
             tickets: Tickets::spawn(),
+            timer: plane(ticking::backend),
             button: plane(button::backend),
+            select: plane(ticking::backend),
+            loop_select: plane(ticking::backend),
             mpsc: plane(mpsc::backend),
             watch: plane(watch::backend),
             broadcast: plane(broadcast::backend),
@@ -100,7 +111,10 @@ impl AppState {
 
     pub fn plane_for(&self, game: Game) -> &dyn Restartable {
         match game {
+            Game::Timer => &self.timer,
             Game::Button => &self.button,
+            Game::Select => &self.select,
+            Game::LoopSelect => &self.loop_select,
             Game::Mpsc => &self.mpsc,
             Game::Watch => &self.watch,
             Game::Broadcast => &self.broadcast,
@@ -176,7 +190,19 @@ pub(crate) async fn supervise<H, S>(
 pub fn game_routes() -> axum::Router<AppState> {
     axum::Router::new()
         .route("/ws/app", axum::routing::get(app_socket))
+        .route(
+            "/ws/game/timer",
+            axum::routing::get(futures_games::timer_socket),
+        )
         .route("/ws/game/button", axum::routing::get(button::button_socket))
+        .route(
+            "/ws/game/select",
+            axum::routing::get(futures_games::select_socket),
+        )
+        .route(
+            "/ws/game/loop-select",
+            axum::routing::get(futures_games::loop_select_socket),
+        )
         .route("/ws/game/mpsc", axum::routing::get(mpsc::mpsc_socket))
         .route("/ws/game/watch", axum::routing::get(watch::watch_socket))
         .route(

@@ -7,11 +7,13 @@ Audience-playable minigames for specific concepts.
 
 1. **Hook — shared synchronized state**: `Arc<Mutex<T>>` buys safety but not backpressure, lifecycle, panic isolation, or deterministic tests. A mutex is an unstructured actor.
   - Mutex is the first shared minigame. Display QR code. Somebody will lock it. On unlock, somebody is selected who is waiting on the lock who gets unlocked. Nobody else can do anything because they get blocked on acquire. So this is not ideal.
-2. Let's start with futures though.
+2. Let's start with futures though. **Built.**
   - Timer minigame. Not interactive. When activated, the future blocks until the next time the seconds are a multiple of 10. Then it yields the number of seconds waited. For comfort, a seconds-of-the-minute timer is displayed.
   - Button minigame. This is real I/O. When activated, the future blocks until either of three colored buttons is pressed, then it yields the button which was clicked. This is a composite future already - it waits for 3 things.
-3. Select minigame. Both Futures from before next to each other. Whichever wins, gets displayed at the bottom (seconds or button).
-4. Loop-select minigame. Both Futures from before next to each other. Whichever wins, gets displayed at the bottom (seconds or button). Then the loop repeats.
+3. Select minigame. Both Futures from before next to each other. Whichever wins, gets displayed at the bottom (seconds or button). **Built.**
+4. Loop-select minigame. Both Futures from before next to each other. Whichever wins, gets displayed at the bottom (seconds or button). Then the loop repeats. **Built**, with a tape of the last few rounds.
+
+  These three share the **tick contract** (`src/clock.rs`): `sync_now` / `next_delay_ms` / `poll_due`, so a sim reports *when* it next wants polling and the driver decides how to wait — a tokio `select!` branch on the server (`src/server/ticking.rs`, one generic actor body for all three) and a frame loop in the browser (`src/games/ticker.rs`). The sims never sleep, so they are tested by stepping a number forward. `SelectSim` composes the real `TimerSim` and `ButtonSim` rather than re-modelling them, which is what makes "the losing branch is dropped" one line rather than a special case.
 
 5. Because loop-select needs to run somewhere, let's put it in an actor. Make a page minigame where the watchdog actor from https://github.com/barafael/watchdog is visualized.
 6. **The actor recipe** (from the blog): actor = plain data; event loop as consuming method returning `Self`; no handle types; natural shutdown by dropping; deterministic unit tests.

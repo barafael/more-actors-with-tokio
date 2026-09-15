@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-pub const SLIDE_COUNT: usize = 6;
+pub const SLIDE_COUNT: usize = 9;
 
 pub const MPSC_CAPACITY: usize = 5;
 
@@ -64,10 +64,13 @@ impl ButtonState {
     }
 }
 
-/// The four minigames, each backed by one actor on the server.
+/// The minigames, each backed by one actor on the server.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Game {
+    Timer,
     Button,
+    Select,
+    LoopSelect,
     Mpsc,
     Watch,
     Broadcast,
@@ -411,6 +414,147 @@ pub enum BroadcastEvent {
         receiver: u64,
         n: u64,
     },
+}
+
+// ---- timer, select and loop-select ----
+
+/// The timer future's period, in seconds: it resolves when the wall clock's
+/// seconds next reach a multiple of this.
+pub const TIMER_PERIOD_S: u64 = 10;
+
+/// How many completed rounds the loop-select tape shows.
+pub const LOOP_SELECT_HISTORY: usize = 8;
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum TimerWire {
+    /// Await the timer: it resolves at the next period boundary.
+    Activate,
+    /// Drop the pending future without awaiting it.
+    Cancel,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum TimerEvent {
+    Snapshot {
+        state: TimerSnapshot,
+    },
+    /// The future was created and will resolve in `waiting_ms`.
+    Activated {
+        waiting_ms: f64,
+    },
+    /// It resolved, yielding how long it waited.
+    Resolved {
+        waited_s: f64,
+    },
+    Cancelled,
+}
+
+/// The timer's full state. `wall_ms` drives the seconds dial, so the server
+/// and every phone draw the same hand in the same place.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct TimerSnapshot {
+    pub pending: bool,
+    /// Milliseconds into the current minute: where the dial's hand points.
+    pub wall_ms: f64,
+    /// Time left on the pending future, or `None` when idle.
+    pub remaining_ms: Option<f64>,
+    /// What the last completed await yielded.
+    pub waited_s: Option<f64>,
+}
+
+/// Which branch of the `select!` completed first.
+///
+/// Carries the branch's value, not just its name: the point of the slide is
+/// that a select yields whatever the winning future yielded, and the two
+/// branches yield different types.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum Won {
+    Timer { waited_s: f64 },
+    Button { color: Color },
+}
+
+impl Won {
+    pub fn css_name(self) -> &'static str {
+        match self {
+            Won::Timer { .. } => "timer",
+            Won::Button { color } => color.css_name(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum SelectWire {
+    /// Enter the select, which creates both futures.
+    Arm,
+    Press {
+        color: Color,
+    },
+    /// Leave the select, dropping both branches.
+    Reset,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum SelectEvent {
+    Snapshot { state: SelectSnapshot },
+    Armed,
+    Won { won: Won },
+    Reset,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct SelectSnapshot {
+    /// Inside the select, with both branches live.
+    pub armed: bool,
+    pub timer: TimerSnapshot,
+    pub button: ButtonState,
+    pub winner: Option<Won>,
+}
+
+/// One completed trip around the loop.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct SelectWinner {
+    /// 1-based, and never reused: the client keys its tape on it.
+    pub round: u64,
+    pub won: Won,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum LoopSelectWire {
+    Start,
+    Stop,
+    Press {
+        color: Color,
+    },
+    /// Empty the tape without breaking the loop.
+    Clear,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum LoopSelectEvent {
+    Snapshot {
+        state: LoopSelectSnapshot,
+    },
+    Started,
+    Stopped,
+    /// A round finished; the loop is about to go around again.
+    Completed {
+        winner: SelectWinner,
+    },
+    Cleared,
+    /// What the inner select did. Nested rather than flattened so the two
+    /// games can share the select's rendering.
+    Select(SelectEvent),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LoopSelectSnapshot {
+    pub running: bool,
+    pub select: SelectSnapshot,
+    /// The last `LOOP_SELECT_HISTORY` rounds, oldest first.
+    pub history: Vec<SelectWinner>,
+    /// Rounds completed since the actor started (or since the tape was
+    /// cleared), which is also the newest round's number.
+    pub rounds: u64,
 }
 
 // ---- tickets and the presenter slot ----
