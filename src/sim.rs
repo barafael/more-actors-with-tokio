@@ -13,6 +13,8 @@ use sim_channels::oneshot::OneshotCore;
 use sim_channels::watch::{BorrowRelease, ChangePoll, SendOffer as WatchSendOffer, WatchCore};
 use sim_channels::WaiterId;
 
+use crate::clock::Ticking;
+
 use crate::protocol::{
     BroadcastError, BroadcastEvent, BroadcastSnapshot, BroadcastWire, BufferChar, ButtonEvent,
     ButtonState, ButtonWire, Color, MpscEvent, MpscSnapshot, MpscWire, RxInfo, RxState, SenderInfo,
@@ -26,11 +28,9 @@ pub const LOCAL_CONN: u64 = 0;
 pub fn now_ms() -> f64 {
     #[cfg(target_arch = "wasm32")]
     {
-        web_sys::window()
-            .expect("window")
-            .performance()
-            .expect("performance")
-            .now()
+        // Cached: this is called on every frame of the clock loop, and
+        // `window()`/`performance()` are two JS-boundary crossings each.
+        crate::clock::with_performance(|performance| performance.now())
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
@@ -137,12 +137,6 @@ impl MpscSim {
         }
     }
 
-    /// Sync the sim clock with the wall clock (drivers call this before
-    /// handling wires and polling landings).
-    pub fn sync_now(&mut self, now_ms: f64) {
-        self.now = now_ms;
-    }
-
     /// Advance the sim clock (tests only).
     pub fn advance(&mut self, ms: f64) {
         self.now += ms;
@@ -228,33 +222,6 @@ impl MpscSim {
             }
             _ => Vec::new(),
         }
-    }
-
-    /// Milliseconds until the next landing is due, if any.
-    pub fn next_delay_ms(&self) -> Option<f64> {
-        self.landings
-            .front()
-            .map(|(due, _, _)| (due - self.now).max(0.0))
-    }
-
-    /// Land every flight whose deadline has passed. Landing is cosmetic: the
-    /// value already sits in the channel, so this only ends the animation and
-    /// lets a waiting receiver pick the value up.
-    pub fn poll_due(&mut self) -> Vec<MpscEvent> {
-        let mut events = Vec::new();
-        while self
-            .landings
-            .front()
-            .is_some_and(|(due, _, _)| *due <= self.now)
-        {
-            let (_, conn, ch) = self.landings.pop_front().expect("checked non-empty");
-            self.in_flight -= 1;
-            events.push(MpscEvent::Consumed { conn, ch });
-        }
-        if !events.is_empty() {
-            events.extend(self.settle());
-        }
-        events
     }
 
     /// Start a value's flight animation.
@@ -362,6 +329,46 @@ impl MpscSim {
         }
     }
 }
+
+/// The mpsc game is clock-driven too: its flights land on a deadline.
+///
+/// This is the case the [`Ticking`] contract was modelled on — the three
+/// methods below were inherent methods here first, and the trait exists to
+/// state their shape once rather than to describe only the newer games.
+impl Ticking for MpscSim {
+    type Event = MpscEvent;
+
+    fn sync_now(&mut self, now_ms: f64) {
+        self.now = now_ms;
+    }
+
+    fn next_delay_ms(&self) -> Option<f64> {
+        self.landings
+            .front()
+            .map(|(due, _, _)| (due - self.now).max(0.0))
+    }
+
+    /// Land every flight whose deadline has passed. Landing is cosmetic: the
+    /// value already sits in the channel, so this only ends the animation and
+    /// lets a waiting receiver pick the value up.
+    fn poll_due(&mut self) -> Vec<MpscEvent> {
+        let mut events = Vec::new();
+        while self
+            .landings
+            .front()
+            .is_some_and(|(due, _, _)| *due <= self.now)
+        {
+            let (_, conn, ch) = self.landings.pop_front().expect("checked non-empty");
+            self.in_flight -= 1;
+            events.push(MpscEvent::Consumed { conn, ch });
+        }
+        if !events.is_empty() {
+            events.extend(self.settle());
+        }
+        events
+    }
+}
+
 /// Late-config watch channel: ONE shared cell of state and a single fixed
 /// sender (the presenter), created with an initial value so receivers are born
 /// with a known `created` phase. Channel truth lives in [`WatchCore`]; this

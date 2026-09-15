@@ -53,35 +53,49 @@ pub trait Ticking {
     }
 }
 
-/// The earliest of two optional delays.
+/// Milliseconds into the current minute, from the wall clock.
 ///
-/// `select!` over two futures waits for whichever is ready first, so a sim
-/// that owns two tickers wants the sooner of their deadlines — and `None`,
-/// meaning "not waiting on the clock", must lose to any real delay rather
-/// than swallowing it.
-pub fn sooner(left: Option<f64>, right: Option<f64>) -> Option<f64> {
-    match (left, right) {
-        (Some(left), Some(right)) => Some(left.min(right)),
-        (delay, None) | (None, delay) => delay,
+/// The dial is read straight off the local wall clock rather than off a
+/// snapshot's `wall_ms`. A snapshot only arrives when something happens,
+/// which is precisely when a swept hand is least informative — and since the
+/// actor derives its own dial from the same wall clock, the two agree to
+/// within the room's clock skew without any interpolation.
+pub fn wall_now_ms() -> f64 {
+    #[cfg(target_arch = "wasm32")]
+    {
+        // `Date.now()` without a js-sys dependency: the time origin plus the
+        // performance clock is the same wall clock.
+        with_performance(|performance| performance.time_origin() + performance.now())
+            .rem_euclid(60_000.0)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_millis() as f64)
+            .unwrap_or_default()
+            .rem_euclid(60_000.0)
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+/// The offset that maps the monotonic sim clock onto the wall dial.
+///
+/// Both the server actor and a single-player browser sim need this, and they
+/// need to agree, so it lives here rather than in either one's module.
+pub fn wall_offset_ms() -> f64 {
+    (wall_now_ms() - crate::sim::now_ms()).rem_euclid(60_000.0)
+}
 
-    #[test]
-    fn sooner_picks_the_nearer_deadline() {
-        assert_eq!(sooner(Some(5.0), Some(9.0)), Some(5.0));
-        assert_eq!(sooner(Some(9.0), Some(5.0)), Some(5.0));
+/// Run `read` against the browser's `Performance`, fetching it once.
+///
+/// `window()` and `performance()` are process-constant but each crossing of
+/// the JS boundary costs; this is on every frame of the clock loop, so the
+/// handle is cached. wasm is single-threaded, hence `thread_local!`.
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn with_performance(read: impl Fn(&web_sys::Performance) -> f64) -> f64 {
+    thread_local! {
+        static PERFORMANCE: Option<web_sys::Performance> =
+            web_sys::window().and_then(|window| window.performance());
     }
-
-    #[test]
-    fn a_sim_waiting_on_a_wire_does_not_swallow_a_real_deadline() {
-        // None means "wake me when a wire arrives", not "wake me never":
-        // it must not out-vote a branch that genuinely has work due.
-        assert_eq!(sooner(None, Some(5.0)), Some(5.0));
-        assert_eq!(sooner(Some(5.0), None), Some(5.0));
-        assert_eq!(sooner(None, None), None);
-    }
+    PERFORMANCE.with(|performance| performance.as_ref().map(read).unwrap_or_default())
 }

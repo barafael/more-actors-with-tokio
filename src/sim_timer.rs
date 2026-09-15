@@ -7,7 +7,7 @@
 //! time an actor shows up, "a loop around a select" is a shape they have
 //! already seen move.
 
-use crate::clock::{sooner, Ticking};
+use crate::clock::Ticking;
 use crate::protocol::{
     ButtonWire, LoopSelectEvent, LoopSelectSnapshot, LoopSelectWire, SelectEvent, SelectSnapshot,
     SelectWinner, SelectWire, TimerEvent, TimerSnapshot, TimerWire, Won, LOOP_SELECT_HISTORY,
@@ -116,11 +116,6 @@ impl TimerSim {
         }
     }
 
-    /// True once the future has a value nobody has consumed yet.
-    pub fn is_resolved(&self) -> bool {
-        self.resolved.is_some()
-    }
-
     /// Drop the resolved value and go back to idle, the way awaiting a
     /// future consumes it.
     pub fn consume(&mut self) {
@@ -168,7 +163,6 @@ impl Ticking for TimerSim {
 pub struct SelectSim {
     timer: TimerSim,
     button: ButtonSim,
-    armed: bool,
     winner: Option<Won>,
 }
 
@@ -183,7 +177,6 @@ impl SelectSim {
         Self {
             timer: TimerSim::new(epoch_offset_ms),
             button: ButtonSim::new(),
-            armed: false,
             winner: None,
         }
     }
@@ -195,7 +188,6 @@ impl SelectSim {
         self.timer.consume();
         self.timer.handle(&TimerWire::Activate);
         self.button.handle(&ButtonWire::Activate);
-        self.armed = true;
         self.winner = None;
         vec![SelectEvent::Armed]
     }
@@ -203,7 +195,6 @@ impl SelectSim {
     /// Whichever branch completed first takes the select; the other is
     /// dropped mid-flight.
     fn settle(&mut self, won: Won) -> Vec<SelectEvent> {
-        self.armed = false;
         self.winner = Some(won);
         // cancel the loser, exactly as `select!` drops the branch it did not
         // take: the timer stops counting, the button stops accepting presses
@@ -216,7 +207,7 @@ impl SelectSim {
     pub fn handle(&mut self, wire: &SelectWire) -> Vec<SelectEvent> {
         match wire {
             SelectWire::Arm => self.arm(),
-            SelectWire::Press { color } if self.armed => {
+            SelectWire::Press { color } if self.armed() => {
                 let resolved = self
                     .button
                     .handle(&ButtonWire::Press { color: *color })
@@ -230,7 +221,6 @@ impl SelectSim {
             }
             SelectWire::Press { .. } => Vec::new(),
             SelectWire::Reset => {
-                self.armed = false;
                 self.winner = None;
                 self.timer.handle(&TimerWire::Cancel);
                 self.timer.consume();
@@ -240,9 +230,18 @@ impl SelectSim {
         }
     }
 
+    /// Inside the select, with both branches live.
+    ///
+    /// Derived rather than stored: arming activates the timer and settling
+    /// cancels it, so a separate flag would be a second copy of the same
+    /// fact with three places to drift.
+    pub fn armed(&self) -> bool {
+        self.timer.snapshot().pending
+    }
+
     pub fn snapshot(&self) -> SelectSnapshot {
         SelectSnapshot {
-            armed: self.armed,
+            armed: self.armed(),
             timer: self.timer.snapshot(),
             button: self.button.state,
             winner: self.winner,
@@ -263,15 +262,15 @@ impl Ticking for SelectSim {
     }
 
     fn next_delay_ms(&self) -> Option<f64> {
-        if !self.armed {
+        if !self.armed() {
             return None;
         }
         // only the timer branch is clock-driven; the button waits on a wire
-        sooner(self.timer.next_delay_ms(), None)
+        self.timer.next_delay_ms()
     }
 
     fn poll_due(&mut self) -> Vec<SelectEvent> {
-        if !self.armed {
+        if !self.armed() {
             return Vec::new();
         }
         let mut events = Vec::new();
@@ -295,9 +294,6 @@ pub struct LoopSelectSim {
     select: SelectSim,
     running: bool,
     history: Vec<SelectWinner>,
-    /// How many times around the loop, which is also the id of the next
-    /// result so the client can key its list without ambiguity.
-    rounds: u64,
 }
 
 impl Default for LoopSelectSim {
@@ -312,15 +308,13 @@ impl LoopSelectSim {
             select: SelectSim::new(epoch_offset_ms),
             running: false,
             history: Vec::new(),
-            rounds: 0,
         }
     }
 
     /// Record a completed round and go around again.
     fn record(&mut self, won: Won) -> Vec<LoopSelectEvent> {
-        self.rounds += 1;
         let entry = SelectWinner {
-            round: self.rounds,
+            round: self.rounds() + 1,
             won,
         };
         self.history.push(entry);
@@ -380,10 +374,18 @@ impl LoopSelectSim {
             }
             LoopSelectWire::Clear => {
                 self.history.clear();
-                self.rounds = 0;
                 vec![LoopSelectEvent::Cleared]
             }
         }
+    }
+
+    /// Rounds completed since the loop started or the tape was cleared.
+    ///
+    /// Read off the tape rather than counted alongside it: the newest entry
+    /// already carries its own round number, and a parallel counter would be
+    /// a second thing for `Clear` to remember to reset.
+    pub fn rounds(&self) -> u64 {
+        self.history.last().map_or(0, |entry| entry.round)
     }
 
     pub fn snapshot(&self) -> LoopSelectSnapshot {
@@ -391,7 +393,7 @@ impl LoopSelectSim {
             running: self.running,
             select: self.select.snapshot(),
             history: self.history.clone(),
-            rounds: self.rounds,
+            rounds: self.rounds(),
         }
     }
 }
@@ -454,7 +456,7 @@ mod timer_tests {
 
         let events = timer.tick(10_000.0);
         assert_eq!(events, vec![TimerEvent::Resolved { waited_s: 7.0 }]);
-        assert!(timer.is_resolved());
+        assert!(timer.snapshot().waited_s.is_some());
     }
 
     #[test]

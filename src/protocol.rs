@@ -22,6 +22,14 @@ pub const MPSC_FLIGHT_MS: u64 = 700;
 /// these every three seconds per phone would bury anything real.
 pub const KEEPALIVE: &str = "ping";
 
+/// The websocket close code a game socket sends when its actor is being
+/// restarted.
+///
+/// In the private range (4000-4999) so it cannot collide with a protocol
+/// code. The client recognises it as "your actor is coming back" and retries
+/// rather than reporting a disconnection.
+pub const RESTARTING_CLOSE_CODE: u16 = 4001;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Color {
     Red,
@@ -47,8 +55,9 @@ impl Color {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ButtonState {
+    #[default]
     Idle,
     Pending,
     Ready(Color),
@@ -451,7 +460,7 @@ pub enum TimerEvent {
 
 /// The timer's full state. `wall_ms` drives the seconds dial, so the server
 /// and every phone draw the same hand in the same place.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 pub struct TimerSnapshot {
     pub pending: bool,
     /// Milliseconds into the current minute: where the dial's hand points.
@@ -501,7 +510,7 @@ pub enum SelectEvent {
     Reset,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 pub struct SelectSnapshot {
     /// Inside the select, with both branches live.
     pub armed: bool,
@@ -546,7 +555,7 @@ pub enum LoopSelectEvent {
     Select(SelectEvent),
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct LoopSelectSnapshot {
     pub running: bool,
     pub select: SelectSnapshot,

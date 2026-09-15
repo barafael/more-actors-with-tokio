@@ -12,119 +12,20 @@
 
 #![cfg(feature = "server")]
 
+mod common;
+
 use std::time::Duration;
 
-use futures_util::{SinkExt, StreamExt};
-use more_actors_with_tokio::protocol::{
-    AppDown, Color, LoopSelectEvent, LoopSelectSnapshot, LoopSelectWire, Role, SelectEvent,
-    SelectSnapshot, SelectWire, TimerEvent, TimerSnapshot, TimerWire, Won, PRESENTER_PARAM,
-    TICKET_PARAM,
+use common::{
+    connect, connect_as_player, connect_as_presenter, env_guard, next_event, next_within, send,
+    serve, take_ticket, Socket,
 };
-use more_actors_with_tokio::server::auth::PRESENTER_KEY_ENV;
-use serde::de::DeserializeOwned;
-use serde::Serialize;
-use tokio::net::TcpListener;
+use futures_util::StreamExt;
+use more_actors_with_tokio::protocol::{
+    Color, LoopSelectEvent, LoopSelectSnapshot, LoopSelectWire, SelectEvent, SelectSnapshot,
+    SelectWire, TimerEvent, TimerSnapshot, TimerWire, Won,
+};
 use tokio_tungstenite::tungstenite::Message;
-
-type Socket =
-    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
-
-const TEST_KEY: &str = "test-presenter-key";
-
-/// Loopback connections are trusted as presenters, which would collapse the
-/// roles these tests check; an audience phone arrives by hostname.
-const AUDIENCE_HOST: &str = "deck.example.test";
-
-/// Serialises these tests against the process-wide `PRESENTER_KEY`, for the
-/// same reason `game_planes.rs` does.
-static ENV: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-
-async fn serve() -> String {
-    std::env::set_var(PRESENTER_KEY_ENV, TEST_KEY);
-    let state = more_actors_with_tokio::server::AppState::spawn();
-    let app = more_actors_with_tokio::server::game_routes().with_state(state);
-    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
-    let addr = listener.local_addr().expect("addr");
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.expect("serve");
-    });
-    format!("ws://{addr}")
-}
-
-async fn connect(base: &str, path: &str) -> Socket {
-    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
-
-    let mut request = format!("{base}{path}")
-        .into_client_request()
-        .expect("build request");
-    request
-        .headers_mut()
-        .insert("host", AUDIENCE_HOST.parse().expect("host header is valid"));
-    let (socket, _) = tokio_tungstenite::connect_async(request)
-        .await
-        .expect("connect");
-    socket
-}
-
-/// Take a player ticket, as a phone that scanned the QR code does. The
-/// returned socket must stay alive: dropping it releases the seat.
-async fn take_ticket(base: &str) -> (Socket, String) {
-    let mut app = connect(base, "/ws/app").await;
-    let frame = tokio::time::timeout(Duration::from_secs(5), app.next())
-        .await
-        .expect("app payload before deadline")
-        .expect("stream open")
-        .expect("frame");
-    let Message::Text(text) = frame else {
-        panic!("expected a text frame, got {frame:?}");
-    };
-    let down: AppDown = serde_json::from_str(&text).expect("decode AppDown");
-    assert_eq!(down.role, Role::Player, "the pool should have seats free");
-    (app, down.granted_ticket.expect("a seat was granted"))
-}
-
-async fn connect_as_player(base: &str, path: &str, ticket: &str) -> Socket {
-    connect(base, &format!("{path}?{TICKET_PARAM}={ticket}")).await
-}
-
-async fn connect_as_presenter(base: &str, path: &str) -> Socket {
-    connect(base, &format!("{path}?{PRESENTER_PARAM}={TEST_KEY}")).await
-}
-
-async fn send<W: Serialize>(socket: &mut Socket, wire: &W) {
-    let json = serde_json::to_string(wire).expect("encode");
-    socket.send(Message::Text(json.into())).await.expect("send");
-}
-
-/// Wait for the first event `pick` accepts, within `timeout`.
-async fn next_within<E: DeserializeOwned, T>(
-    socket: &mut Socket,
-    timeout: Duration,
-    mut pick: impl FnMut(E) -> Option<T>,
-) -> T {
-    let deadline = tokio::time::Instant::now() + timeout;
-    loop {
-        let frame = tokio::time::timeout_at(deadline, socket.next())
-            .await
-            .expect("event before deadline")
-            .expect("stream open")
-            .expect("frame");
-        let Message::Text(text) = frame else { continue };
-        let Ok(event) = serde_json::from_str::<E>(&text) else {
-            continue;
-        };
-        if let Some(found) = pick(event) {
-            return found;
-        }
-    }
-}
-
-async fn next_event<E: DeserializeOwned, T>(
-    socket: &mut Socket,
-    pick: impl FnMut(E) -> Option<T>,
-) -> T {
-    next_within(socket, Duration::from_secs(5), pick).await
-}
 
 async fn timer_snapshot(socket: &mut Socket) -> TimerSnapshot {
     next_event(socket, |event: TimerEvent| match event {
@@ -152,7 +53,7 @@ async fn loop_snapshot(socket: &mut Socket) -> LoopSelectSnapshot {
 
 #[tokio::test]
 async fn a_joiner_gets_the_timer_state_immediately() {
-    let _guard = ENV.lock().await;
+    let _guard = env_guard().await;
     let base = serve().await;
     let (_app, ticket) = take_ticket(&base).await;
     let mut socket = connect_as_player(&base, "/ws/game/timer", &ticket).await;
@@ -169,7 +70,7 @@ async fn a_joiner_gets_the_timer_state_immediately() {
 
 #[tokio::test]
 async fn the_timer_actor_wakes_itself_and_resolves() {
-    let _guard = ENV.lock().await;
+    let _guard = env_guard().await;
     let base = serve().await;
     let (_app, ticket) = take_ticket(&base).await;
     let mut socket = connect_as_player(&base, "/ws/game/timer", &ticket).await;
@@ -209,7 +110,7 @@ async fn the_timer_actor_wakes_itself_and_resolves() {
 
 #[tokio::test]
 async fn dropping_the_future_stops_the_actor_from_firing() {
-    let _guard = ENV.lock().await;
+    let _guard = env_guard().await;
     let base = serve().await;
     let (_app, ticket) = take_ticket(&base).await;
     let mut socket = connect_as_player(&base, "/ws/game/timer", &ticket).await;
@@ -257,7 +158,7 @@ async fn dropping_the_future_stops_the_actor_from_firing() {
 
 #[tokio::test]
 async fn a_spectator_may_watch_the_timer_but_not_drive_it() {
-    let _guard = ENV.lock().await;
+    let _guard = env_guard().await;
     let base = serve().await;
     // no ticket, no key: the default role
     let mut socket = connect(&base, "/ws/game/timer").await;
@@ -277,7 +178,7 @@ async fn a_spectator_may_watch_the_timer_but_not_drive_it() {
 
 #[tokio::test]
 async fn the_button_branch_wins_the_select_and_drops_the_timer() {
-    let _guard = ENV.lock().await;
+    let _guard = env_guard().await;
     let base = serve().await;
     let (_app, ticket) = take_ticket(&base).await;
     let mut socket = connect_as_player(&base, "/ws/game/select", &ticket).await;
@@ -302,7 +203,7 @@ async fn the_button_branch_wins_the_select_and_drops_the_timer() {
 
 #[tokio::test]
 async fn two_clients_see_the_same_select() {
-    let _guard = ENV.lock().await;
+    let _guard = env_guard().await;
     let base = serve().await;
     let (_app, ticket) = take_ticket(&base).await;
     let mut player = connect_as_player(&base, "/ws/game/select", &ticket).await;
@@ -329,7 +230,7 @@ async fn two_clients_see_the_same_select() {
 
 #[tokio::test]
 async fn the_loop_records_a_round_and_arms_the_next() {
-    let _guard = ENV.lock().await;
+    let _guard = env_guard().await;
     let base = serve().await;
     let (_app, ticket) = take_ticket(&base).await;
     let mut socket = connect_as_player(&base, "/ws/game/loop-select", &ticket).await;
@@ -374,7 +275,7 @@ async fn the_loop_records_a_round_and_arms_the_next() {
 
 #[tokio::test]
 async fn breaking_the_loop_leaves_it_inert() {
-    let _guard = ENV.lock().await;
+    let _guard = env_guard().await;
     let base = serve().await;
     let (_app, ticket) = take_ticket(&base).await;
     let mut socket = connect_as_player(&base, "/ws/game/loop-select", &ticket).await;
@@ -401,7 +302,7 @@ async fn breaking_the_loop_leaves_it_inert() {
 
 #[tokio::test]
 async fn restarting_a_ticking_game_closes_sockets_with_4001() {
-    let _guard = ENV.lock().await;
+    let _guard = env_guard().await;
     let base = serve().await;
     let (_app, ticket) = take_ticket(&base).await;
     let mut socket = connect_as_player(&base, "/ws/game/loop-select", &ticket).await;

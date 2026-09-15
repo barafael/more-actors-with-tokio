@@ -1,11 +1,11 @@
-use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
+use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::response::Response;
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
 use crate::protocol::{ButtonEvent, ButtonState, ButtonWire, Color};
 use crate::server::auth::Connecting;
-use crate::server::{release, send_json, AppState};
+use crate::server::{close_restarting, release, send_json, AppState};
 use crate::sim::ButtonSim;
 
 pub enum ButtonMsg {
@@ -183,13 +183,4 @@ async fn resync(socket: &mut WebSocket, cmd_tx: &mpsc::Sender<ButtonMsg>) {
             let _ = send_json(socket, &ButtonEvent::Snapshot { state }).await;
         }
     }
-}
-
-async fn close_restarting(socket: &mut WebSocket) {
-    let _ = socket
-        .send(Message::Close(Some(CloseFrame {
-            code: 4001,
-            reason: "restarting".into(),
-        })))
-        .await;
 }

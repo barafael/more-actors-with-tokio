@@ -82,7 +82,7 @@ pub fn use_game_connection<E: DeserializeOwned>(
             }
             WsEvent::Closed { code } => {
                 handle.clear();
-                if code == 4001 {
+                if code == crate::protocol::RESTARTING_CLOSE_CODE {
                     status.set("restarting…".to_string());
                 } else {
                     status.set(format!("disconnected ({code})"));

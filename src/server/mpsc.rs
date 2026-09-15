@@ -4,14 +4,15 @@
 
 use std::time::Instant;
 
-use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
+use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::response::Response;
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
+use crate::clock::Ticking;
 use crate::protocol::{MpscEvent, MpscSnapshot, MpscWire, MPSC_FLIGHT_MS};
 use crate::server::auth::Connecting;
-use crate::server::{next_conn, release, send_json, AppState, DEAD_PEER_TIMEOUT};
+use crate::server::{close_restarting, next_conn, release, send_json, AppState, DEAD_PEER_TIMEOUT};
 use crate::sim::{now_ms, MpscSim};
 
 pub enum MpscMsg {
@@ -121,10 +122,7 @@ impl MpscService {
                         None => std::future::pending().await,
                     }
                 } => {
-                    let cosmetic = {
-                        self.sim.sync_now(now_ms());
-                        self.sim.poll_due()
-                    };
+                    let cosmetic = self.sim.tick(now_ms());
                     self.publish(&events, cosmetic);
                 }
                 _ = token.cancelled() => break,
@@ -325,13 +323,4 @@ async fn handle_mpsc_socket(mut socket: WebSocket, app: AppState, connecting: Co
         let _ = cmd_tx.send(MpscMsg::RemoveSender { conn }).await;
     }
     release(&app, &identity);
-}
-
-async fn close_restarting(socket: &mut WebSocket) {
-    let _ = socket
-        .send(Message::Close(Some(CloseFrame {
-            code: 4001,
-            reason: "restarting".into(),
-        })))
-        .await;
 }

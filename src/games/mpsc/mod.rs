@@ -8,6 +8,7 @@ mod state;
 
 use dioxus::prelude::*;
 
+use crate::clock::Ticking;
 use crate::games::{use_game_connection, GameConnection};
 use crate::protocol::{MpscEvent, MpscSnapshot, MpscWire, SenderInfo, MPSC_CAPACITY};
 use crate::sim::{now_ms, MpscSim, LOCAL_CONN};
@@ -150,10 +151,7 @@ pub fn MpscGame() -> Element {
             }
             loop {
                 gloo_timers::future::TimeoutFuture::new(50).await;
-                let landed = sim.with_mut(|s| {
-                    s.sync_now(now_ms());
-                    s.poll_due()
-                });
+                let landed = sim.with_mut(|s| s.tick(now_ms()));
                 let landed_any = !landed.is_empty();
                 for event in landed {
                     chan.apply(event);

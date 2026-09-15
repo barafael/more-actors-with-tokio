@@ -11,167 +11,33 @@
 
 #![cfg(feature = "server")]
 
+mod common;
+
 use std::time::Duration;
 
+use common::{
+    connect, connect_as_player, connect_as_presenter, env_guard, next_event, send, serve,
+    take_ticket, Socket,
+};
 use futures_util::{SinkExt, StreamExt};
 use more_actors_with_tokio::protocol::{
     AppDown, BroadcastError, BroadcastEvent, BroadcastWire, MpscEvent, MpscWire, Role, KEEPALIVE,
-    PRESENTER_PARAM, TICKET_PARAM,
+    PRESENTER_PARAM,
 };
 use more_actors_with_tokio::server::auth::PRESENTER_KEY_ENV;
 use tokio::net::TcpListener;
 use tokio_tungstenite::tungstenite::Message;
 
-type Socket =
-    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
-
-/// The presenter secret these tests present.
-const TEST_KEY: &str = "test-presenter-key";
-
-/// Serialises every test against the process-wide `PRESENTER_KEY`.
-///
-/// The variable is global but cargo runs these tests in threads, and one
-/// of them must clear it to prove the server generates its own. Scoping
-/// the lock to just the write is not enough — the clear would still land
-/// while another test's server is mid-handshake — so every test holds this
-/// for its whole body and they run one at a time. There are eight of them
-/// and they take under a second in total.
-///
-/// A tokio mutex rather than a std one: the guard is held across every
-/// await in a test body, which is exactly what a blocking mutex must not
-/// do. It also does not poison, so one failing test cannot cascade.
-static ENV: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-
-async fn env_guard() -> tokio::sync::MutexGuard<'static, ()> {
-    ENV.lock().await
-}
-
-/// Boot the game planes on an ephemeral port and return its address.
-async fn serve() -> String {
-    std::env::set_var(PRESENTER_KEY_ENV, TEST_KEY);
-    let state = more_actors_with_tokio::server::AppState::spawn();
-    let app = more_actors_with_tokio::server::game_routes().with_state(state);
-    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
-    let addr = listener.local_addr().expect("addr");
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.expect("serve");
-    });
-    format!("ws://{addr}")
-}
-
-/// The `Host` these tests present.
-///
-/// Loopback connections present without a key (see `auth::is_loopback_host`),
-/// which is right for a laptop but would make every socket here a presenter
-/// and collapse the roles these tests exist to check. An audience phone
-/// reaches the deck by its public hostname, so that is what is modelled.
-const AUDIENCE_HOST: &str = "deck.example.test";
-
-async fn connect(base: &str, path: &str) -> Socket {
-    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
-
-    let mut request = format!("{base}{path}")
-        .into_client_request()
-        .expect("build request");
-    request
-        .headers_mut()
-        .insert("host", AUDIENCE_HOST.parse().expect("host header is valid"));
-    let (socket, _) = tokio_tungstenite::connect_async(request)
-        .await
-        .expect("connect");
-    socket
-}
-
-/// Take a player ticket from the pool, the way a phone that scanned the QR
-/// code does: open the app plane and keep the socket for the seat's life.
-///
-/// The returned socket must stay alive — dropping it releases the hold.
-async fn take_ticket(base: &str) -> (Socket, String) {
-    let mut app = connect(base, "/ws/app").await;
-    let frame = tokio::time::timeout(Duration::from_secs(5), app.next())
-        .await
-        .expect("app payload before deadline")
-        .expect("stream open")
-        .expect("frame");
-    let Message::Text(text) = frame else {
-        panic!("expected a text frame, got {frame:?}");
-    };
-    let down: AppDown = serde_json::from_str(&text).expect("decode AppDown");
-    assert_eq!(down.role, Role::Player, "the pool should have seats free");
-    let ticket = down.granted_ticket.expect("a seat was granted");
-    (app, ticket)
-}
-
-/// Connect to a game socket as a ticket-holding player.
-async fn connect_as_player(base: &str, path: &str, ticket: &str) -> Socket {
-    connect(base, &format!("{path}?{TICKET_PARAM}={ticket}")).await
-}
-
-async fn mpsc_send(socket: &mut Socket, wire: &MpscWire) {
-    let json = serde_json::to_string(wire).expect("encode");
-    socket.send(Message::Text(json.into())).await.expect("send");
-}
-
-async fn mpsc_next<T>(socket: &mut Socket, mut pick: impl FnMut(MpscEvent) -> Option<T>) -> T {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-    loop {
-        let frame = tokio::time::timeout_at(deadline, socket.next())
-            .await
-            .expect("event before deadline")
-            .expect("stream open")
-            .expect("frame");
-        let Message::Text(text) = frame else { continue };
-        let Ok(event) = serde_json::from_str::<MpscEvent>(&text) else {
-            continue;
-        };
-        if let Some(found) = pick(event) {
-            return found;
-        }
-    }
-}
-
 async fn mpsc_hello(socket: &mut Socket) -> u64 {
-    mpsc_next(socket, |event| match event {
+    next_event(socket, |event: MpscEvent| match event {
         MpscEvent::Hello { conn } => Some(conn),
         _ => None,
     })
     .await
 }
 
-/// Connect to a game socket with the presenter key.
-async fn connect_as_presenter(base: &str, path: &str) -> Socket {
-    connect(base, &format!("{path}?{PRESENTER_PARAM}={TEST_KEY}")).await
-}
-
-async fn send(socket: &mut Socket, wire: &BroadcastWire) {
-    let json = serde_json::to_string(wire).expect("encode");
-    socket.send(Message::Text(json.into())).await.expect("send");
-}
-
-/// Read events until one decodes to something `pick` accepts.
-async fn next_matching<T>(
-    socket: &mut Socket,
-    mut pick: impl FnMut(BroadcastEvent) -> Option<T>,
-) -> T {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-    loop {
-        let frame = tokio::time::timeout_at(deadline, socket.next())
-            .await
-            .expect("event before deadline")
-            .expect("stream open")
-            .expect("frame");
-        let Message::Text(text) = frame else { continue };
-        let Ok(event) = serde_json::from_str::<BroadcastEvent>(&text) else {
-            continue;
-        };
-        if let Some(found) = pick(event) {
-            return found;
-        }
-    }
-}
-
 async fn hello(socket: &mut Socket) -> u64 {
-    next_matching(socket, |event| match event {
+    next_event(socket, |event: BroadcastEvent| match event {
         BroadcastEvent::Hello { conn } => Some(conn),
         _ => None,
     })
@@ -195,7 +61,7 @@ async fn broadcast_subscriber_starts_at_the_tail_over_the_wire() {
     let mut early = connect_as_player(&base, "/ws/game/broadcast", &early_ticket).await;
     hello(&mut early).await;
     send(&mut early, &BroadcastWire::Subscribe).await;
-    next_matching(&mut early, |event| match event {
+    next_event(&mut early, |event| match event {
         BroadcastEvent::Snapshot { state } if !state.receivers.is_empty() => Some(()),
         _ => None,
     })
@@ -204,7 +70,7 @@ async fn broadcast_subscriber_starts_at_the_tail_over_the_wire() {
     for ch in ['a', 'b', 'c'] {
         send(&mut presenter, &BroadcastWire::Send { conn: 0, ch }).await;
     }
-    let snap = next_matching(&mut presenter, |event| match event {
+    let snap = next_event(&mut presenter, |event| match event {
         BroadcastEvent::Snapshot { state } if state.buffer.len() == 3 => Some(state),
         _ => None,
     })
@@ -217,7 +83,7 @@ async fn broadcast_subscriber_starts_at_the_tail_over_the_wire() {
     let late_conn = hello(&mut late).await;
     send(&mut late, &BroadcastWire::Subscribe).await;
 
-    let snap = next_matching(&mut late, |event| match event {
+    let snap = next_event(&mut late, |event| match event {
         BroadcastEvent::Snapshot { state }
             if state.receivers.iter().any(|r| r.owner == late_conn) =>
         {
@@ -257,7 +123,7 @@ async fn buffered_values_outlive_the_last_sender_over_the_wire() {
     let mut listener = connect_as_player(&base, "/ws/game/broadcast", &listener_ticket).await;
     let listener_conn = hello(&mut listener).await;
     send(&mut listener, &BroadcastWire::Subscribe).await;
-    let snap = next_matching(&mut listener, |event| match event {
+    let snap = next_event(&mut listener, |event| match event {
         BroadcastEvent::Snapshot { state }
             if state.receivers.iter().any(|r| r.owner == listener_conn) =>
         {
@@ -276,7 +142,7 @@ async fn buffered_values_outlive_the_last_sender_over_the_wire() {
     for ch in ['x', 'y'] {
         send(&mut presenter, &BroadcastWire::Send { conn: 0, ch }).await;
     }
-    next_matching(&mut listener, |event| match event {
+    next_event(&mut listener, |event| match event {
         BroadcastEvent::Snapshot { state } if state.buffer.len() == 2 => Some(()),
         _ => None,
     })
@@ -284,7 +150,7 @@ async fn buffered_values_outlive_the_last_sender_over_the_wire() {
 
     // the presenter walks out, taking every sender handle with it
     drop(presenter);
-    next_matching(&mut listener, |event| match event {
+    next_event(&mut listener, |event| match event {
         BroadcastEvent::Snapshot { state } if state.senders.is_empty() => Some(()),
         _ => None,
     })
@@ -292,7 +158,7 @@ async fn buffered_values_outlive_the_last_sender_over_the_wire() {
 
     // both values are still owed to us
     send(&mut listener, &BroadcastWire::Receive { receiver }).await;
-    let ch = next_matching(&mut listener, |event| match event {
+    let ch = next_event(&mut listener, |event| match event {
         BroadcastEvent::Received { ch, .. } => Some(ch),
         _ => None,
     })
@@ -300,7 +166,7 @@ async fn buffered_values_outlive_the_last_sender_over_the_wire() {
     assert_eq!(ch, 'x');
 
     send(&mut listener, &BroadcastWire::Receive { receiver }).await;
-    let ch = next_matching(&mut listener, |event| match event {
+    let ch = next_event(&mut listener, |event| match event {
         BroadcastEvent::Received { ch, .. } => Some(ch),
         _ => None,
     })
@@ -309,7 +175,7 @@ async fn buffered_values_outlive_the_last_sender_over_the_wire() {
 
     // only now is it closed
     send(&mut listener, &BroadcastWire::Receive { receiver }).await;
-    let snap = next_matching(&mut listener, |event| match event {
+    let snap = next_event(&mut listener, |event| match event {
         BroadcastEvent::Snapshot { state }
             if state
                 .receivers
@@ -344,7 +210,7 @@ async fn a_spectator_cannot_send() {
     // no ticket, no key
     let mut spectator = connect(&base, "/ws/game/mpsc").await;
     let spectator_conn = mpsc_hello(&mut spectator).await;
-    mpsc_send(
+    send(
         &mut spectator,
         &MpscWire::Send {
             conn: spectator_conn,
@@ -356,7 +222,7 @@ async fn a_spectator_cannot_send() {
     // The player's send is the barrier, but only once it has *landed*:
     // mpsc values spend MPSC_FLIGHT_MS in the air, so a snapshot taken
     // while either value is still in flight proves nothing.
-    mpsc_send(
+    send(
         &mut player,
         &MpscWire::Send {
             conn: player_conn,
@@ -365,7 +231,7 @@ async fn a_spectator_cannot_send() {
     )
     .await;
 
-    let snap = mpsc_next(&mut player, |event| match event {
+    let snap = next_event(&mut player, |event| match event {
         MpscEvent::Snapshot { state } if state.in_flight == 0 && !state.buffer.is_empty() => {
             Some(state)
         }
@@ -391,7 +257,7 @@ async fn a_player_cannot_seize_the_presenter_slot() {
     let mut presenter = connect_as_presenter(&base, "/ws/game/broadcast").await;
     let presenter_conn = hello(&mut presenter).await;
     send(&mut presenter, &BroadcastWire::ClaimPresenter).await;
-    next_matching(&mut presenter, |event| match event {
+    next_event(&mut presenter, |event| match event {
         BroadcastEvent::Snapshot { state } if state.presenter == Some(presenter_conn) => Some(()),
         _ => None,
     })
@@ -405,7 +271,7 @@ async fn a_player_cannot_seize_the_presenter_slot() {
     // Subscribe is allowed for a player, so its effect is the barrier: once
     // the receiver shows up, the claim ahead of it has been processed.
     send(&mut player, &BroadcastWire::Subscribe).await;
-    let snap = next_matching(&mut player, |event| match event {
+    let snap = next_event(&mut player, |event| match event {
         BroadcastEvent::Snapshot { state } if !state.receivers.is_empty() => Some(state),
         _ => None,
     })

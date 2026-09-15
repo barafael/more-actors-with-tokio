@@ -5,14 +5,14 @@
 
 use std::time::Instant;
 
-use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
+use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::response::Response;
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
 use crate::protocol::{BroadcastEvent, BroadcastSnapshot, BroadcastWire};
 use crate::server::auth::Connecting;
-use crate::server::{release, send_json, AppState, DEAD_PEER_TIMEOUT};
+use crate::server::{close_restarting, release, send_json, AppState, DEAD_PEER_TIMEOUT};
 use crate::sim::BroadcastSim;
 
 pub enum BroadcastMsg {
@@ -270,13 +270,4 @@ async fn handle_broadcast_socket(mut socket: WebSocket, app: AppState, connectin
     // dropping the connection drops its senders and its receiver
     let _ = cmd_tx.send(BroadcastMsg::DropConnection { conn }).await;
     release(&app, &identity);
-}
-
-async fn close_restarting(socket: &mut WebSocket) {
-    let _ = socket
-        .send(Message::Close(Some(CloseFrame {
-            code: 4001,
-            reason: "restarting".into(),
-        })))
-        .await;
 }

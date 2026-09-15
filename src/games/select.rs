@@ -9,42 +9,15 @@
 
 use dioxus::prelude::*;
 
-use crate::clock::Ticking;
-use crate::games::ticker::{use_clock, use_local_tick};
+use crate::clock::{wall_offset_ms, Ticking};
+use crate::games::ticker::{subscribe, use_clock, use_local_tick};
 use crate::games::{use_game_connection, GameConnection};
 use crate::protocol::{
-    ButtonState, Color, Game, LoopSelectEvent, LoopSelectSnapshot, LoopSelectWire, SelectEvent,
-    SelectSnapshot, SelectWinner, SelectWire, TimerSnapshot, Won,
+    Color, Game, LoopSelectEvent, LoopSelectSnapshot, LoopSelectWire, SelectEvent, SelectSnapshot,
+    SelectWinner, SelectWire, TimerSnapshot, Won,
 };
 use crate::sim_timer::{LoopSelectSim, SelectSim};
 use crate::{AppCtx, GameMode};
-
-fn empty_timer() -> TimerSnapshot {
-    TimerSnapshot {
-        pending: false,
-        wall_ms: 0.0,
-        remaining_ms: None,
-        waited_s: None,
-    }
-}
-
-fn empty_select() -> SelectSnapshot {
-    SelectSnapshot {
-        armed: false,
-        timer: empty_timer(),
-        button: ButtonState::Idle,
-        winner: None,
-    }
-}
-
-fn empty_loop() -> LoopSelectSnapshot {
-    LoopSelectSnapshot {
-        running: false,
-        select: empty_select(),
-        history: Vec::new(),
-        rounds: 0,
-    }
-}
 
 // ---- the shared picture ----
 
@@ -165,8 +138,8 @@ fn dispatch_select(
 pub fn SelectGame() -> Element {
     let ctx: AppCtx = use_context();
     let mode = use_context::<GameMode>();
-    let state = use_signal(empty_select);
-    let sim = use_signal(|| SelectSim::new(crate::games::timer::wall_offset_ms()));
+    let state = use_signal(SelectSnapshot::default);
+    let sim = use_signal(|| SelectSim::new(wall_offset_ms()));
 
     let conn = use_game_connection::<SelectEvent>("/ws/game/select", move |event| {
         apply_select(state, event)
@@ -177,8 +150,8 @@ pub fn SelectGame() -> Element {
     // Local mode republishes every frame so the countdown ticks down rather
     // than jumping when a wire happens to arrive.
     use_effect(move || {
-        if mode == GameMode::Local {
-            let _ = clock();
+        subscribe(clock);
+        if mode == GameMode::Local && sim.peek().next_delay_ms().is_some() {
             apply_select(
                 state,
                 SelectEvent::Snapshot {
@@ -275,8 +248,8 @@ fn dispatch_loop(
 pub fn LoopSelectGame() -> Element {
     let ctx: AppCtx = use_context();
     let mode = use_context::<GameMode>();
-    let state = use_signal(empty_loop);
-    let sim = use_signal(|| LoopSelectSim::new(crate::games::timer::wall_offset_ms()));
+    let state = use_signal(LoopSelectSnapshot::default);
+    let sim = use_signal(|| LoopSelectSim::new(wall_offset_ms()));
 
     let conn = use_game_connection::<LoopSelectEvent>("/ws/game/loop-select", move |event| {
         apply_loop(state, event)
@@ -285,8 +258,11 @@ pub fn LoopSelectGame() -> Element {
     let clock = use_clock();
     use_local_tick(sim, clock, move |event| apply_loop(state, event));
     use_effect(move || {
-        if mode == GameMode::Local {
-            let _ = clock();
+        subscribe(clock);
+        // `LoopSelectSnapshot::snapshot` clones the history tape, so an
+        // unguarded republish is a heap allocation ten times a second for a
+        // loop that is not running.
+        if mode == GameMode::Local && sim.peek().next_delay_ms().is_some() {
             apply_loop(
                 state,
                 LoopSelectEvent::Snapshot {
@@ -420,7 +396,7 @@ mod tests {
 
     #[test]
     fn an_idle_branch_reads_zero() {
-        assert_eq!(remaining_s(empty_timer()), 0);
+        assert_eq!(remaining_s(TimerSnapshot::default()), 0);
     }
 
     #[test]

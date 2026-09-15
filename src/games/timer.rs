@@ -8,8 +8,8 @@
 
 use dioxus::prelude::*;
 
-use crate::clock::Ticking;
-use crate::games::ticker::{use_clock, use_local_tick};
+use crate::clock::{wall_now_ms, wall_offset_ms, Ticking};
+use crate::games::ticker::{subscribe, use_clock, use_local_tick};
 use crate::games::{use_game_connection, GameConnection};
 use crate::protocol::{Game, TimerEvent, TimerSnapshot, TimerWire, TIMER_PERIOD_S};
 use crate::sim_timer::TimerSim;
@@ -17,15 +17,6 @@ use crate::{AppCtx, GameMode};
 
 /// Radius of the dial, in the svg's own units.
 const DIAL_R: f64 = 46.0;
-
-fn empty_snapshot() -> TimerSnapshot {
-    TimerSnapshot {
-        pending: false,
-        wall_ms: 0.0,
-        remaining_ms: None,
-        waited_s: None,
-    }
-}
 
 fn apply(mut state: Signal<TimerSnapshot>, event: TimerEvent) {
     // Only the snapshot is authoritative; the rest are cues the UI may drop.
@@ -60,7 +51,7 @@ fn dispatch(
 pub fn TimerGame() -> Element {
     let ctx: AppCtx = use_context();
     let mode = use_context::<GameMode>();
-    let state = use_signal(empty_snapshot);
+    let state = use_signal(TimerSnapshot::default);
     let sim = use_signal(|| TimerSim::new(wall_offset_ms()));
 
     let conn =
@@ -74,8 +65,11 @@ pub fn TimerGame() -> Element {
     // In local mode the snapshot is republished every frame so the dial and
     // the countdown follow the clock rather than the last wire.
     use_effect(move || {
-        if mode == GameMode::Local {
-            let _ = clock();
+        subscribe(clock);
+        // Only while the future is actually counting down: republishing an
+        // idle snapshot every frame allocates and re-renders for a screen
+        // that is not moving.
+        if mode == GameMode::Local && sim.peek().next_delay_ms().is_some() {
             apply(
                 state,
                 TimerEvent::Snapshot {
@@ -86,13 +80,16 @@ pub fn TimerGame() -> Element {
     });
 
     let snapshot = state();
-    // The clock signal is what re-runs this component each frame; the hand
-    // itself comes from the wall clock so it sweeps rather than jumping.
-    let _ = clock();
-    let wall_ms = if mode == GameMode::Local {
-        snapshot.wall_ms
-    } else {
-        wall_now_ms()
+    // Subscribing to `clock` is what re-runs this component each frame; the
+    // returned instant is the sim clock, which is not what the dial shows,
+    // so it is deliberately only a subscription.
+    subscribe(clock);
+    // In local mode the sim's own snapshot already carries the dial. In
+    // remote mode snapshots only arrive when something happens, so the hand
+    // is read off the wall clock and sweeps between them.
+    let wall_ms = match mode {
+        GameMode::Local => snapshot.wall_ms,
+        GameMode::Remote => wall_now_ms(),
     };
 
     rsx! {
@@ -158,7 +155,7 @@ fn restart(
 ) {
     if conn.is_local() {
         sim.set(TimerSim::new(wall_offset_ms()));
-        state.set(empty_snapshot());
+        state.set(TimerSnapshot::default());
         conn.set_status("single-player");
     } else {
         ctx.send(crate::AppUp::Restart { game: Game::Timer });
@@ -184,20 +181,8 @@ fn Dial(wall_ms: f64, pending: bool) -> Element {
             }
             // one tick per period boundary: these are the instants the
             // future can resolve at
-            for step in 0..(60 / TIMER_PERIOD_S) {
-                {
-                    let tick = (step * TIMER_PERIOD_S) as f64 / 60.0 * std::f64::consts::TAU
-                        - std::f64::consts::FRAC_PI_2;
-                    rsx! {
-                        line {
-                            class: "dial-tick",
-                            x1: "{50.0 + DIAL_R * 0.82 * tick.cos()}",
-                            y1: "{50.0 + DIAL_R * 0.82 * tick.sin()}",
-                            x2: "{50.0 + DIAL_R * tick.cos()}",
-                            y2: "{50.0 + DIAL_R * tick.sin()}",
-                        }
-                    }
-                }
+            for (x1, y1, x2, y2) in dial_ticks() {
+                line { class: "dial-tick", x1: "{x1}", y1: "{y1}", x2: "{x2}", y2: "{y2}" }
             }
             line {
                 class: if pending { "dial-hand pending" } else { "dial-hand" },
@@ -210,47 +195,32 @@ fn Dial(wall_ms: f64, pending: bool) -> Element {
     }
 }
 
+/// The dial's tick marks, as `(x1, y1, x2, y2)` in svg units.
+///
+/// These depend only on `TIMER_PERIOD_S` and `DIAL_R`, so they are computed
+/// once rather than re-derived — six trig calls apiece — on every frame.
+fn dial_ticks() -> &'static [(f64, f64, f64, f64)] {
+    static TICKS: std::sync::OnceLock<Vec<(f64, f64, f64, f64)>> = std::sync::OnceLock::new();
+    TICKS.get_or_init(|| {
+        (0..(60 / TIMER_PERIOD_S))
+            .map(|step| {
+                let angle = (step * TIMER_PERIOD_S) as f64 / 60.0 * std::f64::consts::TAU
+                    - std::f64::consts::FRAC_PI_2;
+                let (sin, cos) = angle.sin_cos();
+                (
+                    50.0 + DIAL_R * 0.82 * cos,
+                    50.0 + DIAL_R * 0.82 * sin,
+                    50.0 + DIAL_R * cos,
+                    50.0 + DIAL_R * sin,
+                )
+            })
+            .collect()
+    })
+}
+
 /// Whole seconds, rounded up, so a countdown never shows 0 while waiting.
 fn seconds(ms: f64) -> u64 {
     (ms / 1000.0).ceil().max(0.0) as u64
-}
-
-/// Milliseconds into the current minute, from the system clock.
-///
-/// The dial is read straight off the local wall clock rather than off the
-/// snapshot's `wall_ms`. A snapshot only arrives when something happens,
-/// which is precisely when a swept hand is least informative — and since
-/// the actor derives its own dial from the same wall clock, the two agree
-/// to within the room's clock skew without any interpolation.
-fn wall_now_ms() -> f64 {
-    #[cfg(target_arch = "wasm32")]
-    {
-        js_sys_date_now().rem_euclid(60_000.0)
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|elapsed| elapsed.as_millis() as f64)
-            .unwrap_or_default()
-            .rem_euclid(60_000.0)
-    }
-}
-
-/// The offset that maps the local monotonic clock onto the wall dial, for a
-/// single-player sim.
-pub fn wall_offset_ms() -> f64 {
-    (wall_now_ms() - crate::sim::now_ms()).rem_euclid(60_000.0)
-}
-
-#[cfg(target_arch = "wasm32")]
-fn js_sys_date_now() -> f64 {
-    // `Date.now()` without a js-sys dependency: the performance origin plus
-    // the time origin is the same wall clock.
-    web_sys::window()
-        .and_then(|window| window.performance())
-        .map(|performance| performance.time_origin() + performance.now())
-        .unwrap_or_default()
 }
 
 #[cfg(test)]

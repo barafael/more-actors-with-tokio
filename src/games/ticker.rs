@@ -52,6 +52,14 @@ where
 {
     use_effect(move || {
         let now = clock();
+        // Nothing pending means nothing the clock can do, so leave the sim
+        // untouched. `with_mut` marks the signal dirty whether or not it
+        // changed anything, which would re-render every subscriber ten times
+        // a second — for an idle game, and for every game in remote mode,
+        // where the local sim is never armed at all.
+        if sim.peek().next_delay_ms().is_none() {
+            return;
+        }
         let events = sim.with_mut(|sim| sim.tick(now));
         for event in events {
             apply(event);
@@ -71,4 +79,15 @@ async fn sleep_ms(ms: u32) {
         let _ = ms;
         std::future::pending::<()>().await;
     }
+}
+
+/// Subscribe the calling component to a signal without using its value.
+///
+/// Reading a signal inside a component body is what makes Dioxus re-run that
+/// body when the signal changes. Where the value itself is not wanted — a
+/// component that redraws each frame from another source — the read still
+/// has to happen, and `let _ = clock();` reads as a line that does nothing
+/// and invites deletion. This says what it is for.
+pub fn subscribe<T: Clone + 'static>(signal: Signal<T>) {
+    let _subscribed = signal();
 }

@@ -5,14 +5,14 @@
 //! but a `borrow()` read guard blocks `send`, so the sim queues the send as
 //! `pending_send` until the last guard drops.
 
-use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
+use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::response::Response;
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
 use crate::protocol::{WatchEvent, WatchSnapshot, WatchWire};
 use crate::server::auth::Connecting;
-use crate::server::{release, send_json, AppState};
+use crate::server::{close_restarting, release, send_json, AppState};
 use crate::sim::WatchSim;
 
 pub enum WatchMsg {
@@ -332,13 +332,4 @@ async fn handle_watch_socket(mut socket: WebSocket, app: AppState, connecting: C
     }
     let _ = cmd_tx.send(WatchMsg::ReleasePresenter { conn }).await;
     release(&app, &identity);
-}
-
-async fn close_restarting(socket: &mut WebSocket) {
-    let _ = socket
-        .send(Message::Close(Some(CloseFrame {
-            code: 4001,
-            reason: "restarting".into(),
-        })))
-        .await;
 }

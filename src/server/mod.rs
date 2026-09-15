@@ -354,6 +354,21 @@ fn join_url(loopback_host: Option<&str>) -> Option<String> {
 /// `https://more-actors-with-tokio.fly.dev`.
 pub const JOIN_URL_ENV: &str = "JOIN_URL";
 
+/// Close a game socket because its actor is being replaced.
+///
+/// Every game does this identically, and the client keys its retry on the
+/// code, so the code and the frame live in one place.
+pub(crate) async fn close_restarting(socket: &mut WebSocket) {
+    socket
+        .send(Message::Close(Some(axum::extract::ws::CloseFrame {
+            code: crate::protocol::RESTARTING_CLOSE_CODE,
+            reason: "restarting".into(),
+        })))
+        .await
+        .inspect_err(|error| tracing::debug!(%error, "peer left before the close frame"))
+        .ok();
+}
+
 pub(crate) async fn send_json(
     socket: &mut WebSocket,
     value: &impl serde::Serialize,

@@ -8,7 +8,6 @@
 use axum::extract::ws::{WebSocket, WebSocketUpgrade};
 use axum::response::Response;
 
-use crate::clock::Ticking;
 use crate::protocol::{
     LoopSelectEvent, LoopSelectWire, SelectEvent, SelectWire, TimerEvent, TimerWire,
 };
@@ -22,6 +21,7 @@ pub type SelectHandles = TickingHandles<SelectSim>;
 pub type LoopSelectHandles = TickingHandles<LoopSelectSim>;
 
 impl TickingGame for TimerSim {
+    type Ev = TimerEvent;
     type Wire = TimerWire;
 
     const NAME: &'static str = "timer";
@@ -42,6 +42,7 @@ impl TickingGame for TimerSim {
 }
 
 impl TickingGame for SelectSim {
+    type Ev = SelectEvent;
     type Wire = SelectWire;
 
     const NAME: &'static str = "select";
@@ -62,6 +63,7 @@ impl TickingGame for SelectSim {
 }
 
 impl TickingGame for LoopSelectSim {
+    type Ev = LoopSelectEvent;
     type Wire = LoopSelectWire;
 
     const NAME: &'static str = "loop-select";
@@ -113,16 +115,3 @@ pub async fn loop_select_socket(
         handle_socket::<LoopSelectSim>(socket, state, connecting, |app| app.loop_select.handles())
     })
 }
-
-/// Assert at compile time that each game's sim really is clock-driven; the
-/// generic actor would otherwise accept a sim that never ticks and quietly
-/// park forever.
-const _: () = {
-    fn assert_ticking<T: Ticking>() {}
-    fn check() {
-        assert_ticking::<TimerSim>();
-        assert_ticking::<SelectSim>();
-        assert_ticking::<LoopSelectSim>();
-    }
-    let _ = check;
-};

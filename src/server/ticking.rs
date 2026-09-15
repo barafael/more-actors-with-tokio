@@ -12,7 +12,7 @@
 //! made generic over three games without a trait object or a lock is the
 //! argument the slide makes.
 
-use axum::extract::ws::{CloseFrame, Message, WebSocket};
+use axum::extract::ws::{Message, WebSocket};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use tokio::sync::{broadcast, mpsc, oneshot};
@@ -20,14 +20,21 @@ use tokio_util::sync::CancellationToken;
 
 use crate::clock::Ticking;
 use crate::server::auth::Connecting;
-use crate::server::{release, send_json, AppState, DEAD_PEER_TIMEOUT};
+use crate::server::{close_restarting, release, send_json, AppState, DEAD_PEER_TIMEOUT};
 use crate::sim::now_ms;
 
 /// What a clock-driven game must supply to be run by [`TickingService`].
-pub trait TickingGame: Ticking + Send + 'static
-where
-    Self::Event: Clone + Send + 'static,
-{
+pub trait TickingGame: Ticking<Event = <Self as TickingGame>::Ev> + Send + 'static {
+    /// This game's event type.
+    ///
+    /// A redundant-looking projection of [`Ticking::Event`], and the reason
+    /// is worth stating: Rust does not elaborate a trait's `where` clauses
+    /// into implied bounds at use sites, so spelling the bound here — where
+    /// it can be written on an associated type — is what stops every impl,
+    /// struct and function downstream from having to repeat
+    /// `where Self::Event: Clone + Send`.
+    type Ev: Clone + Send + 'static;
+
     /// The command a client sends.
     type Wire: DeserializeOwned + Send + 'static;
 
@@ -47,11 +54,15 @@ where
 }
 
 /// Commands the socket handlers send to a ticking actor.
-pub enum TickMsg<W, E> {
-    Wire(W),
+///
+/// Keyed on the game rather than on `(Wire, Event)` separately: the game
+/// already determines both, and two free parameters would permit a
+/// `TickMsg<TimerWire, SelectEvent>` that no actor could ever receive.
+pub enum TickMsg<G: TickingGame> {
+    Wire(G::Wire),
     /// A late joiner asking for the current state.
     Get {
-        reply: oneshot::Sender<E>,
+        reply: oneshot::Sender<G::Event>,
     },
 }
 
@@ -60,11 +71,7 @@ pub struct TickingService<G> {
     sim: G,
 }
 
-impl<G> TickingService<G>
-where
-    G: TickingGame,
-    G::Event: Clone + Send + 'static,
-{
+impl<G: TickingGame> TickingService<G> {
     pub fn new(epoch_offset_ms: f64) -> Self {
         Self {
             sim: G::fresh(epoch_offset_ms),
@@ -91,7 +98,7 @@ where
     /// `select!`, in a loop, over state nothing else can touch.
     pub async fn event_loop(
         mut self,
-        mut rx: mpsc::Receiver<TickMsg<G::Wire, G::Event>>,
+        mut rx: mpsc::Receiver<TickMsg<G>>,
         events: broadcast::Sender<G::Event>,
         token: CancellationToken,
     ) -> Self {
@@ -141,20 +148,14 @@ async fn sleep_for(delay: Option<f64>) {
 }
 
 /// The handles a socket needs to talk to one ticking actor.
-pub struct TickingHandles<G: TickingGame>
-where
-    G::Event: Clone + Send + 'static,
-{
-    cmd_tx: mpsc::Sender<TickMsg<G::Wire, G::Event>>,
+pub struct TickingHandles<G: TickingGame> {
+    cmd_tx: mpsc::Sender<TickMsg<G>>,
     evt_tx: broadcast::Sender<G::Event>,
 }
 
 // Derived `Clone` would demand `G: Clone`, which no sim is: only the two
 // channel endpoints are cloned, and both are always cloneable.
-impl<G: TickingGame> Clone for TickingHandles<G>
-where
-    G::Event: Clone + Send + 'static,
-{
+impl<G: TickingGame> Clone for TickingHandles<G> {
     fn clone(&self) -> Self {
         Self {
             cmd_tx: self.cmd_tx.clone(),
@@ -163,11 +164,8 @@ where
     }
 }
 
-impl<G: TickingGame> TickingHandles<G>
-where
-    G::Event: Clone + Send + 'static,
-{
-    pub fn cmd_tx(&self) -> mpsc::Sender<TickMsg<G::Wire, G::Event>> {
+impl<G: TickingGame> TickingHandles<G> {
+    pub fn cmd_tx(&self) -> mpsc::Sender<TickMsg<G>> {
         self.cmd_tx.clone()
     }
 
@@ -176,34 +174,17 @@ where
     }
 }
 
-/// Wall-clock milliseconds since the top of the current minute, measured
-/// against the sim clock's origin.
-///
-/// The sim clock is monotonic with an arbitrary origin, so "a multiple of
-/// ten seconds" in sim time is meaningless on a wall clock. This is the
-/// offset that maps one onto the other, computed once when the actor
-/// spawns.
-pub fn epoch_offset_ms() -> f64 {
-    let since_epoch = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_millis() as f64)
-        .unwrap_or_default();
-    (since_epoch - now_ms()).rem_euclid(60_000.0)
-}
-
 /// Spawn one ticking game's supervisor.
 pub async fn backend<G: TickingGame>(
     restart: mpsc::UnboundedReceiver<()>,
     handles_tx: tokio::sync::watch::Sender<Option<TickingHandles<G>>>,
-) where
-    G::Event: Clone + Send + 'static,
-{
+) {
     crate::server::supervise(G::NAME, restart, handles_tx, |token| {
         let (cmd_tx, cmd_rx) = mpsc::channel(64);
         let (evt_tx, _) = broadcast::channel(64);
         let events = evt_tx.clone();
         let task = tokio::spawn(async move {
-            TickingService::<G>::new(epoch_offset_ms())
+            TickingService::<G>::new(crate::clock::wall_offset_ms())
                 .event_loop(cmd_rx, events, token)
                 .await;
         });
@@ -222,7 +203,7 @@ pub async fn handle_socket<G: TickingGame>(
     connecting: Connecting,
     plane: impl Fn(&AppState) -> Option<TickingHandles<G>>,
 ) where
-    G::Event: Clone + Send + Serialize + 'static,
+    G::Event: Serialize,
 {
     let Connecting { identity, conn } = connecting;
     tracing::debug!(conn, game = G::NAME, "game socket");
@@ -312,15 +293,4 @@ pub async fn handle_socket<G: TickingGame>(
     }
 
     release(&app, &identity);
-}
-
-async fn close_restarting(socket: &mut WebSocket) {
-    socket
-        .send(Message::Close(Some(CloseFrame {
-            code: 4001,
-            reason: "restarting".into(),
-        })))
-        .await
-        .inspect_err(|error| tracing::debug!(%error, "peer left before the close frame"))
-        .ok();
 }
