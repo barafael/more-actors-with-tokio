@@ -455,9 +455,16 @@ strong {
     gap: 4px;
 }
 
-.side-btns .field,
-.sender-ctl .field,
-.tx-ctl .field {
+/* The one-character draft fields: fixed-size to sit next to the
+   fixed-size .btn controls. Scoped under .diagram on purpose — three
+   classes outrank the generic `.diagram input` rule above, which is
+   rem-scaled (and therefore grows past this fixed 26px height on a
+   sizeable screen, spilling the typed character out of the box). */
+.diagram .side-btns .field,
+.diagram .sender-ctl .field,
+.diagram .tx-ctl .field,
+.diagram .create-row .field,
+.diagram .sender-btns .field {
     width: 26px;
     height: 26px;
     text-align: center;
@@ -468,6 +475,87 @@ strong {
     font-family: 'Fira Mono', monospace;
     background: #fff;
     color: #333;
+}
+
+/* ---- stage: canvas diagram + HUD overlay (ported from lib/live.css) ---- */
+
+/* The canvas is the diagram: the whole surface is draggable. HUD controls
+   ride on top as absolutely positioned rsx, pinned to their node fraction. */
+.stage-canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 2;
+    touch-action: none;
+    cursor: grab;
+}
+
+.stage-canvas:active {
+    cursor: grabbing;
+}
+
+.hud {
+    position: absolute;
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+/* the controls sit just above their sender circle */
+.hud.sender-ctl {
+    transform: translate(-50%, calc(-100% - 54px));
+}
+
+/* the receive row hangs under the buffer strip */
+.hud.receiver-hud {
+    transform: translate(-50%, 0);
+}
+
+.hud.receiver-hud.waiting .btn.rcv {
+    box-shadow: 0 0 0 3px rgba(235, 91, 32, 0.35);
+}
+
+.stage-legend {
+    position: absolute;
+    top: 10px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font: 600 12px 'Fira Mono', monospace;
+    color: #666;
+    background: rgba(255, 248, 225, 0.75);
+    border: 1px solid rgba(51, 51, 51, 0.25);
+    padding: 4px 12px;
+    border-radius: 999px;
+    pointer-events: none;
+    user-select: none;
+}
+
+.stage-legend span {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.stage-legend span::before {
+    content: "";
+    width: 11px;
+    height: 11px;
+    border-radius: 50%;
+    border: 2px solid rgba(0, 0, 0, 0.35);
+}
+
+.stage-legend .legend-tx::before {
+    background: #2e7d32;
+}
+
+.stage-legend .legend-dot::before {
+    background: #000;
 }
 
 /* receiver group: dot on top, buffer below it, receive row under that */

@@ -396,8 +396,10 @@ pub struct WatchSim {
     owners: BTreeMap<u64, u64>,
     /// Receivers currently holding a `borrow()` read guard.
     borrowing: BTreeSet<u64>,
-    /// The one send parked behind outstanding borrows, if any.
-    pending_send: Option<char>,
+    /// The one send parked behind outstanding borrows, if any. The core
+    /// keeps its queue entry after the send resolves and only `poll_send`
+    /// retires it, so the waiter id is kept alongside the value.
+    pending_send: Option<(WaiterId, char)>,
     presenter: Option<u64>,
     next_rx: u64,
     order: Vec<u64>,
@@ -501,20 +503,22 @@ impl WatchSim {
                         version: core.version(),
                         ch: *ch,
                     }],
-                    WatchSendOffer::Blocked { .. } => {
-                        self.pending_send = Some(*ch);
+                    WatchSendOffer::Blocked { waiter } => {
+                        self.pending_send = Some((waiter, *ch));
                         vec![WatchEvent::SendBlocked]
                     }
                     WatchSendOffer::Rejected(_) => vec![WatchEvent::SendRefused],
                 }
             }
             WatchWire::NewReceiver => {
+                // the cap is per owner: one client must not be able to
+                // starve every other connection of receivers
+                if self.owned_by(conn).len() >= WATCH_MAX_RX {
+                    return Vec::new();
+                }
                 let Some(core) = self.core.as_mut() else {
                     return Vec::new();
                 };
-                if self.order.len() >= WATCH_MAX_RX {
-                    return Vec::new();
-                }
                 let core_id = core.subscribe();
                 self.register(core_id, conn)
             }
@@ -524,7 +528,7 @@ impl WatchSim {
                 let Some(&source) = self.ids.get(rx) else {
                     return Vec::new();
                 };
-                if self.order.len() >= WATCH_MAX_RX {
+                if self.owned_by(conn).len() >= WATCH_MAX_RX {
                     return Vec::new();
                 }
                 let Some(core) = self.core.as_mut() else {
@@ -603,25 +607,48 @@ impl WatchSim {
     }
 
     /// A parked send resolves once the last read guard drops.
+    ///
+    /// The core keeps the resolved entry in its queue — `poll_send` is what
+    /// retires it, the same recheck a live sender thread runs in its own
+    /// loop. Skipping the poll would leave the queue non-empty and park
+    /// every later `send` behind nothing.
     fn settle_release(&mut self, release: BorrowRelease) -> Vec<WatchEvent> {
         match release {
             BorrowRelease::Released => Vec::new(),
             BorrowRelease::Resolved => {
-                let ch = self.pending_send.take();
-                let version = self.core.as_ref().map_or(0, WatchCore::version);
-                match ch {
-                    Some(ch) => vec![WatchEvent::Changed { version, ch }],
-                    None => Vec::new(),
+                let Some((waiter, ch)) = self.pending_send.take() else {
+                    return Vec::new();
+                };
+                if let Some(core) = self.core.as_mut() {
+                    core.poll_send(waiter);
                 }
+                let version = self.core.as_ref().map_or(0, WatchCore::version);
+                vec![WatchEvent::Changed { version, ch }]
             }
             BorrowRelease::Refused => {
-                self.pending_send = None;
+                if let Some((waiter, _)) = self.pending_send.take() {
+                    if let Some(core) = self.core.as_mut() {
+                        core.poll_send(waiter);
+                    }
+                }
                 vec![WatchEvent::SendRefused]
             }
         }
     }
 
     pub fn snapshot(&self) -> WatchSnapshot {
+        // Invariant: the core's send queue only holds entries while a send
+        // is parked behind borrows. A resolved-but-unretired entry would
+        // park every later `send` behind nothing (the driver must poll it
+        // away, as a live sender thread would).
+        debug_assert!(
+            self.pending_send.is_some()
+                || self
+                    .core
+                    .as_ref()
+                    .is_none_or(|core| core.pending_waiters().is_empty()),
+            "no send is parked, so the core's send queue must be empty"
+        );
         let receivers = self
             .order
             .iter()
@@ -641,7 +668,7 @@ impl WatchSim {
             created: self.core.is_some(),
             value: self.core.as_ref().map(|core| *core.value()),
             version: self.core.as_ref().map_or(0, WatchCore::version),
-            pending_send: self.pending_send,
+            pending_send: self.pending_send.map(|(_, ch)| ch),
             presenter: self.presenter,
             receivers,
         }
@@ -1206,12 +1233,107 @@ mod tests {
         assert!(snap.blocked_sends.is_empty(), "blocked send discarded");
         assert!(!sim.contains_sender(2));
     }
+
+    /// The beats composed into one channel lifetime: fill the buffer, park
+    /// two sends, wake them FIFO, park two receives, serve both, then
+    /// disconnect a sender whose send is still parked. Cross-beat state —
+    /// queues that must drain completely before the channel behaves again
+    /// — is what one-beat-per-test isolations cannot see.
+    #[test]
+    fn mpsc_journey_composes_the_beats_in_one_channel() {
+        let mut sim = MpscSim::new(FLIGHT);
+        sim.add_sender(1, 1);
+        sim.add_sender(2, 1);
+
+        // fill the buffer and land every flight so occupancy is settled
+        for i in 0..CAP {
+            send(&mut sim, 1, char::from_u32('a' as u32 + i as u32).unwrap());
+        }
+        sim.advance(FLIGHT);
+        let _ = sim.poll_due();
+
+        // two sends park holding their values, in park order
+        send(&mut sim, 2, 'x');
+        send(&mut sim, 2, 'y');
+        assert_eq!(
+            sim.snapshot()
+                .blocked_sends
+                .iter()
+                .map(|b| b.ch)
+                .collect::<Vec<_>>(),
+            ['x', 'y']
+        );
+
+        // each receive drains one buffered value and wakes one parked
+        // send — FIFO, never random
+        let mut woken = Vec::new();
+        for _ in 0..2 {
+            for event in receive(&mut sim) {
+                if let MpscEvent::InFlight { ch, .. } = event {
+                    woken.push(ch);
+                }
+            }
+            sim.advance(FLIGHT);
+            let _ = sim.poll_due();
+        }
+        assert_eq!(woken, ['x', 'y']);
+        assert!(sim.snapshot().blocked_sends.is_empty(), "queue drained");
+
+        // drain what is left of the buffer: three originals never read
+        // plus the two woken values landed into it
+        for _ in 0..5 {
+            receive(&mut sim);
+            sim.advance(FLIGHT);
+            let _ = sim.poll_due();
+        }
+        assert!(sim.snapshot().buffer.is_empty(), "buffer fully drained");
+
+        // two receives park on the drained channel and are served in
+        // order, straight past the buffer — the sim serves parked
+        // receives when the sending flight lands
+        receive(&mut sim);
+        receive(&mut sim);
+        assert!(sim.snapshot().waiting_receive);
+        send(&mut sim, 1, 'p');
+        send(&mut sim, 1, 'q');
+        sim.advance(FLIGHT);
+        let _ = sim.poll_due();
+        let snap = sim.snapshot();
+        assert_eq!(snap.last_received, Some(BufferChar { ch: 'q', conn: 1 }));
+        assert!(snap.buffer.is_empty(), "waiting receives bypass the buffer");
+        assert!(!snap.waiting_receive, "both receives served");
+
+        // refill and park once more; disconnecting the parked sender
+        // cancels its send — the value never lands
+        for i in 0..CAP {
+            send(&mut sim, 1, char::from_u32('a' as u32 + i as u32).unwrap());
+        }
+        sim.advance(FLIGHT);
+        let _ = sim.poll_due();
+        send(&mut sim, 2, 'z');
+        assert_eq!(
+            sim.snapshot().blocked_sends,
+            vec![BufferChar { ch: 'z', conn: 2 }]
+        );
+
+        let events = sim.remove_sender(2);
+        assert_eq!(events, vec![MpscEvent::SenderLeft { conn: 2 }]);
+        let snap = sim.snapshot();
+        assert!(snap.blocked_sends.is_empty(), "cancelled, not stranded");
+        assert!(!snap.senders.iter().any(|s| s.conn == 2));
+        assert_eq!(
+            snap.last_received,
+            Some(BufferChar { ch: 'q', conn: 1 }),
+            "the cancelled value never arrived"
+        );
+    }
 }
 
 #[cfg(test)]
 mod watch_tests {
     use super::*;
     use crate::protocol::{WatchEvent, WatchWire};
+    use sim_channels::watch::SendPoll as WatchSendPoll;
 
     /// Two-player sim: presenter is conn 1, a player is conn 2.
     fn sim() -> WatchSim {
@@ -1511,8 +1633,8 @@ mod watch_tests {
             .is_empty());
     }
 
-    /// The receiver cap used to be a client-side button gate only; a
-    /// crafted client could subscribe without limit.
+    /// The receiver cap is per owner: a crafted client must not be able to
+    /// starve every other connection of receivers.
     #[test]
     fn receiver_cap_is_enforced_by_the_sim() {
         let mut sim = sim();
@@ -1526,6 +1648,16 @@ mod watch_tests {
             "the cap holds regardless of what the client allows"
         );
         assert_eq!(sim.snapshot().receivers.len(), WATCH_MAX_RX);
+
+        // another connection still gets its own budget of WATCH_MAX_RX
+        for _ in 0..WATCH_MAX_RX {
+            assert!(
+                !sim.handle(&WatchWire::NewReceiver, 3).is_empty(),
+                "one owner at the cap must not block the others"
+            );
+        }
+        assert!(sim.handle(&WatchWire::NewReceiver, 3).is_empty());
+        assert_eq!(sim.snapshot().receivers.len(), 2 * WATCH_MAX_RX);
     }
 
     #[test]
@@ -1551,6 +1683,120 @@ mod watch_tests {
         assert_eq!(owned.len(), 2);
         assert!(sim.owned_by(1).is_empty());
         assert_eq!(sim.owned_by(3).len(), 1);
+    }
+
+    /// Differential: the watch driver against the bare core through the
+    /// borrow-blocked-send beats. The core keeps a resolved send in its
+    /// queue until `poll_send` retires it — the reference model plays the
+    /// sender thread and polls. A driver that stops retiring entries
+    /// drifts at exactly the next send: its send parks behind a stale
+    /// entry while the core's commits.
+    #[test]
+    fn watch_driver_matches_the_core_through_blocked_sends() {
+        let mut sim = sim();
+        create(&mut sim);
+        let mut core = WatchCore::new('c');
+        core.drop_receiver(1);
+        let assert_agree = |sim: &WatchSim, core: &WatchCore<char>, at: &str| {
+            assert_eq!(value(sim), Some(*core.value()), "{at}: value");
+            assert_eq!(sim.snapshot().version, core.version(), "{at}: version");
+            assert_eq!(
+                sim.snapshot().pending_send.is_some(),
+                core.pending_waiters().len() == 1,
+                "{at}: parked-send state"
+            );
+        };
+
+        let r = rx(&mut sim, 2);
+        let core_r = core.subscribe();
+        assert_agree(&sim, &core, "after subscribe");
+
+        // a plain send commits in both models
+        assert_eq!(
+            sim.handle(&WatchWire::Send { ch: 'd' }, 1),
+            vec![WatchEvent::Changed {
+                version: 1,
+                ch: 'd'
+            }]
+        );
+        assert_eq!(core.send('d'), WatchSendOffer::Sent);
+        assert_agree(&sim, &core, "after plain send");
+
+        // a borrow parks the send in both models
+        sim.handle(&WatchWire::LookInside { rx: r }, 2);
+        core.begin_borrow();
+        assert_eq!(
+            sim.handle(&WatchWire::Send { ch: 'e' }, 1),
+            vec![WatchEvent::SendBlocked]
+        );
+        let waiter = match core.send('e') {
+            WatchSendOffer::Blocked { waiter } => waiter,
+            other => panic!("core should park the send, got {other:?}"),
+        };
+        assert_agree(&sim, &core, "while parked");
+
+        // release: both commit, and the reference retires the resolved
+        // entry the way a live sender thread would
+        assert_eq!(
+            sim.handle(&WatchWire::LookInside { rx: r }, 2),
+            vec![WatchEvent::Changed {
+                version: 2,
+                ch: 'e'
+            }]
+        );
+        core.end_borrow();
+        core.poll_send(waiter);
+        assert_agree(&sim, &core, "after release");
+
+        // the regression beat: nobody is borrowing, so the next send must
+        // commit — a stale queue entry would park it forever
+        assert_eq!(
+            sim.handle(&WatchWire::Send { ch: 'f' }, 1),
+            vec![WatchEvent::Changed {
+                version: 3,
+                ch: 'f'
+            }]
+        );
+        assert_eq!(core.send('f'), WatchSendOffer::Sent);
+        assert_agree(&sim, &core, "after the send following a blocked one");
+
+        // refusal must also drain: block a send, then the last receiver
+        // leaves while the borrow is out
+        sim.handle(&WatchWire::LookInside { rx: r }, 2);
+        core.begin_borrow();
+        assert_eq!(
+            sim.handle(&WatchWire::Send { ch: 'g' }, 1),
+            vec![WatchEvent::SendBlocked]
+        );
+        let waiter = match core.send('g') {
+            WatchSendOffer::Blocked { waiter } => waiter,
+            other => panic!("core should park the send, got {other:?}"),
+        };
+        assert_eq!(
+            sim.handle(&WatchWire::DropReceiver { rx: r }, 2),
+            vec![
+                WatchEvent::ReceiverRemoved { id: r },
+                WatchEvent::SendRefused
+            ]
+        );
+        core.drop_receiver(core_r);
+        core.end_borrow();
+        assert_eq!(core.poll_send(waiter), WatchSendPoll::Failed('g'));
+        assert_agree(&sim, &core, "after refusal");
+
+        // the channel still works for a fresh receiver afterwards
+        let r2 = rx(&mut sim, 2);
+        let core_r2 = core.subscribe();
+        assert_eq!(
+            sim.handle(&WatchWire::Send { ch: 'h' }, 1),
+            vec![WatchEvent::Changed {
+                version: 4,
+                ch: 'h'
+            }]
+        );
+        assert_eq!(core.send('h'), WatchSendOffer::Sent);
+        assert_agree(&sim, &core, "after refusal, new receiver");
+        let _ = (r2, core_r2);
     }
 }
 
@@ -1855,6 +2101,123 @@ mod broadcast_tests {
         assert!(!sim.contains_sender(1));
         assert!(sim.contains_sender(BROADCAST_HOST_CONN));
         assert_eq!(sim.owner_of_sender(BROADCAST_HOST_CONN), Some(9));
+    }
+
+    /// The broadcast beats composed into one channel lifetime: a receiver
+    /// that reads as the stream flows, a mid-stream subscriber, armed
+    /// recvs completing on the next send, lag and resume, a send that is
+    /// visibly refused once nobody listens, and closure with retained
+    /// values still readable until drained.
+    #[test]
+    fn broadcast_journey_composes_the_beats_in_one_channel() {
+        let mut sim = BroadcastSim::new();
+        let early = subscribe(&mut sim, 2);
+
+        // early reads as the stream flows and stays caught up
+        for ch in 'a'..='c' {
+            bsend(&mut sim, BROADCAST_HOST_CONN, ch);
+            assert_eq!(
+                recv(&mut sim, early, 2),
+                vec![BroadcastEvent::Received {
+                    receiver: early,
+                    ch
+                }]
+            );
+        }
+
+        // a late subscriber starts at the tail: history is not retroactive
+        let late = subscribe(&mut sim, 3);
+        assert_eq!(rx(&sim, late).next, 4, "past the three sent values");
+
+        // nothing new for either: recv arms; the next send completes both
+        assert!(recv(&mut sim, early, 2).is_empty());
+        assert!(recv(&mut sim, late, 3).is_empty());
+        let events = bsend(&mut sim, BROADCAST_HOST_CONN, 'd');
+        assert!(events.contains(&BroadcastEvent::Received {
+            receiver: early,
+            ch: 'd'
+        }));
+        assert!(events.contains(&BroadcastEvent::Received {
+            receiver: late,
+            ch: 'd'
+        }));
+
+        // late stops reading while early keeps up; the ring overwrites
+        // late's unread values
+        for ch in 'e'..='k' {
+            bsend(&mut sim, BROADCAST_HOST_CONN, ch);
+            assert_eq!(
+                recv(&mut sim, early, 2),
+                vec![BroadcastEvent::Received {
+                    receiver: early,
+                    ch
+                }]
+            );
+        }
+        assert_eq!(
+            recv(&mut sim, late, 3),
+            vec![BroadcastEvent::Lagged {
+                receiver: late,
+                n: 2
+            }]
+        );
+        assert_eq!(
+            recv(&mut sim, late, 3),
+            vec![BroadcastEvent::Received {
+                receiver: late,
+                ch: 'g'
+            }],
+            "resume at the oldest retained value"
+        );
+
+        // the last listener leaves: the send comes back with a visible
+        // refusal, and the stream position does not move
+        assert_eq!(
+            sim.handle(&BroadcastWire::Unsubscribe { receiver: early }, 2),
+            vec![BroadcastEvent::ReceiverRemoved { receiver: early }]
+        );
+        assert_eq!(
+            sim.handle(&BroadcastWire::Unsubscribe { receiver: late }, 3),
+            vec![BroadcastEvent::ReceiverRemoved { receiver: late }]
+        );
+        assert_eq!(
+            bsend(&mut sim, BROADCAST_HOST_CONN, 'l'),
+            vec![BroadcastEvent::SendRefused]
+        );
+
+        // a fresh subscriber starts at the unchanged tail, the channel
+        // flows again, and then the last sender goes away
+        let fresh = subscribe(&mut sim, 4);
+        assert_eq!(rx(&sim, fresh).next, 12, "the refused send never counted");
+        bsend(&mut sim, BROADCAST_HOST_CONN, 'l');
+        bsend(&mut sim, BROADCAST_HOST_CONN, 'm');
+        assert_eq!(
+            sim.drop_connection(BROADCAST_HOST_CONN),
+            vec![BroadcastEvent::SenderLeft {
+                conn: BROADCAST_HOST_CONN
+            }]
+        );
+
+        // retained values stay readable until drained, then Closure shows
+        assert_eq!(
+            recv(&mut sim, fresh, 4),
+            vec![BroadcastEvent::Received {
+                receiver: fresh,
+                ch: 'l'
+            }]
+        );
+        assert_eq!(
+            recv(&mut sim, fresh, 4),
+            vec![BroadcastEvent::Received {
+                receiver: fresh,
+                ch: 'm'
+            }]
+        );
+        assert!(
+            recv(&mut sim, fresh, 4).is_empty(),
+            "closure is reported in state, not as an event"
+        );
+        assert_eq!(rx(&sim, fresh).error, Some(BroadcastError::Closed));
     }
 }
 

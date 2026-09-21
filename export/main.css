@@ -455,9 +455,16 @@ strong {
     gap: 4px;
 }
 
-.side-btns .field,
-.sender-ctl .field,
-.tx-ctl .field {
+/* The one-character draft fields: fixed-size to sit next to the
+   fixed-size .btn controls. Scoped under .diagram on purpose — three
+   classes outrank the generic `.diagram input` rule above, which is
+   rem-scaled (and therefore grows past this fixed 26px height on a
+   sizeable screen, spilling the typed character out of the box). */
+.diagram .side-btns .field,
+.diagram .sender-ctl .field,
+.diagram .tx-ctl .field,
+.diagram .create-row .field,
+.diagram .sender-btns .field {
     width: 26px;
     height: 26px;
     text-align: center;

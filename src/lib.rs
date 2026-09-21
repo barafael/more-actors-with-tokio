@@ -7,6 +7,7 @@ pub mod server;
 pub mod sim;
 pub mod sim_timer;
 pub mod slides;
+pub mod stage;
 pub mod ws_client;
 
 use dioxus::prelude::*;

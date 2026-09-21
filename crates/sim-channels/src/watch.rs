@@ -502,6 +502,11 @@ impl<T> WatchCore<T> {
         self.version
     }
 
+    /// Whether the [`Sender`] handle is still alive.
+    pub fn sender_alive(&self) -> bool {
+        self.sender_alive
+    }
+
     /// Number of borrow guards currently out.
     pub fn readers(&self) -> usize {
         self.readers
@@ -816,7 +821,7 @@ impl<T> Receiver<T> {
 
     /// 1 while the sender is alive, 0 once it is gone.
     pub fn sender_count(&self) -> usize {
-        usize::from(self.shared.lock.lock().contains(self.rx))
+        usize::from(self.shared.lock.lock().sender_alive())
     }
 }
 
@@ -1048,6 +1053,14 @@ mod core_tests {
     }
 
     #[test]
+    fn sender_alive_tracks_the_handle() {
+        let (mut core, _rx) = core();
+        assert!(core.sender_alive());
+        core.drop_sender();
+        assert!(!core.sender_alive());
+    }
+
+    #[test]
     fn sender_gone_closes_changed() {
         let (mut core, rx) = core();
         core.drop_sender();
@@ -1150,6 +1163,19 @@ mod handle_tests {
         thread::sleep(std::time::Duration::from_millis(20));
         drop(tx);
         assert_eq!(reader.join().expect("reader thread"), Err(RecvError));
+    }
+
+    #[test]
+    fn sender_count_reports_the_sender_not_the_receiver() {
+        let (tx, rx) = channel('a');
+        assert_eq!(rx.sender_count(), 1);
+        drop(tx);
+        assert_eq!(
+            rx.sender_count(),
+            0,
+            "the receiver is alive; only the sender is gone"
+        );
+        assert_eq!(rx.receiver_count(), 1);
     }
 
     #[test]
