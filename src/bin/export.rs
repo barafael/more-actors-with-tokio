@@ -21,21 +21,72 @@ fn render_deck(index: usize) -> String {
     dioxus_ssr::pre_render(&dom)
 }
 
-fn page(title: &str, body: &str) -> String {
+/// Static, wasm-free navigation for a slide page: `prev`/`next` file names
+/// (None disables that side) and the "n / N" counter.
+struct Nav {
+    prev: Option<&'static str>,
+    next: Option<&'static str>,
+    counter: String,
+}
+
+fn page(title: &str, body: &str, nav: Option<&Nav>) -> String {
     // The client's hydrate feature is compiled in, so the exported pages must
     // carry root hydration data like the fullstack server does. Our app has no
     // server functions; this is the byte-for-byte root payload the live server
     // sends (capture again if use_server_futures are ever introduced).
     let hydration_data = "hoEY9vb2gRj1gRj1gRj1";
+    let (nav_style, nav_html) = match nav {
+        None => (String::new(), String::new()),
+        Some(nav) => {
+            let (prev, next) = (
+                nav.prev
+                    .map(|f| format!("<a href=\"{f}\" rel=\"prev\">&#8249; prev</a>"))
+                    .unwrap_or_else(|| "<span class=\"off\">&#8249; prev</span>".to_string()),
+                nav.next
+                    .map(|f| format!("<a href=\"{f}\" rel=\"next\">next &#8250;</a>"))
+                    .unwrap_or_else(|| "<span class=\"off\">next &#8250;</span>".to_string()),
+            );
+            let style = "<style>\n.export-nav{position:fixed;bottom:8px;left:50%;transform:translateX(-50%);z-index:60;display:flex;gap:10px;align-items:center;font:600 12px 'Fira Mono',monospace;color:#999;background:rgba(255,248,225,.85);border:1px solid rgba(51,51,51,.25);padding:4px 12px;border-radius:999px;user-select:none}\n.export-nav a{color:#eb5b20;text-decoration:none}\n.export-nav a:hover{text-decoration:underline}\n.export-nav .off{opacity:.35}\n</style>\n".to_string();
+            let bar = format!(
+                "<nav class=\"export-nav\">{prev}<span class=\"count\">{}</span>{next}</nav>\n",
+                nav.counter
+            );
+            (style, bar)
+        }
+    };
+    let key_nav = match nav {
+        None => String::new(),
+        Some(nav) => {
+            let prev_js = nav
+                .prev
+                .map(|f| format!("\"{f}\""))
+                .unwrap_or_else(|| "null".into());
+            let next_js = nav
+                .next
+                .map(|f| format!("\"{f}\""))
+                .unwrap_or_else(|| "null".into());
+            // Arrow/space paging for the page as opened from disk, where the
+            // wasm client cannot load (module scripts fail on file://). It
+            // stands down the moment the real bundle boots (`__dx_booted`,
+            // set by the module script's onload): the hydrated deck binds the
+            // same keys, and both firing would reload the page mid-deck.
+            format!(
+                "<script>(function(){{var PREV={prev_js},NEXT={next_js};document.addEventListener(\"keydown\",function(e){{if(window.__dx_booted===true||e.defaultPrevented||e.altKey||e.ctrlKey||e.metaKey)return;var t=e.target;if(t&&(t.tagName===\"INPUT\"||t.tagName===\"TEXTAREA\"||t.tagName===\"BUTTON\"||t.isContentEditable))return;var k=e.key,go=null;if(k===\"ArrowRight\"||k===\"PageDown\"||k===\" \")go=NEXT;else if(k===\"ArrowLeft\"||k===\"PageUp\")go=PREV;if(go){{e.preventDefault();location.href=go;}}}});}})();</script>\n"
+            )
+        }
+    };
     format!(
         "<!doctype html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>{title}</title>\n\
          <meta name=\"game-mode\" content=\"local\">\n\
          <link rel=\"stylesheet\" href=\"https://fonts.googleapis.com/css2?family=Bitter:ital@0;1&amp;family=Fira+Mono&amp;display=swap\">\n\
          <link rel=\"stylesheet\" href=\"main.css\">\n\
          <script>{STREAMING_INIT}</script>\n\
+         {nav_style}\
          </head>\n<body>\n<div id=\"main\">\n{body}\n</div>\n\
+         {nav_html}\
          <script>window.initial_dioxus_hydration_data=\"{hydration_data}\";window.initial_dioxus_hydration_debug_types=[];window.initial_dioxus_hydration_debug_locations=[];</script>\n\
-         <script type=\"module\" src=\"./wasm/more-actors-with-tokio.js\"></script>\n</body>\n</html>\n",
+         {key_nav}\
+         <script type=\"module\" src=\"./wasm/more-actors-with-tokio.js\" onload=\"window.__dx_booted=true\"></script>\n</body>\n</html>\n",
     )
 }
 
@@ -78,13 +129,34 @@ fn main() {
         );
 
         let file = format!("slide-{i}-{name}.html");
-        std::fs::write(out_dir.join(&file), page(name, &body))
-            .unwrap_or_else(|e| panic!("write {file}: {e}"));
+        let slide_file = |j: usize| format!("slide-{j}-{}.html", SLIDE_NAMES[j]);
+        std::fs::write(
+            out_dir.join(&file),
+            page(
+                name,
+                &body,
+                Some(&Nav {
+                    prev: if i > 0 {
+                        Some(slide_file(i - 1).leak())
+                    } else {
+                        None
+                    },
+                    next: if i + 1 < SLIDE_NAMES.len() {
+                        Some(slide_file(i + 1).leak())
+                    } else {
+                        None
+                    },
+                    counter: format!("{} / {}", i + 1, SLIDE_NAMES.len()),
+                }),
+            ),
+        )
+        .unwrap_or_else(|e| panic!("write {file}: {e}"));
         index_links.push_str(&format!("<li><a href=\"{file}\">{name}</a></li>\n"));
     }
 
     let index_body = render_deck(0);
-    std::fs::write(out_dir.join("index.html"), page("index", &index_body)).expect("write index");
+    std::fs::write(out_dir.join("index.html"), page("index", &index_body, None))
+        .expect("write index");
 
     std::fs::copy(
         std::path::Path::new("assets/main.css"),

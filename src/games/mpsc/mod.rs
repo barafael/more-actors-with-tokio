@@ -120,7 +120,13 @@ pub fn MpscGame() -> Element {
         flights: use_signal(Vec::new),
         key: use_signal(|| 0u64),
     };
-    let mut my_conn: Signal<Option<u64>> = use_signal(|| None);
+    // Local mode has no socket and therefore no `Hello`: the single player
+    // owns every handle from the start (same convention as the broadcast
+    // game). Remote waits for the server to assign a connection.
+    let mut my_conn: Signal<Option<u64>> = use_signal(|| match mode {
+        GameMode::Local => Some(LOCAL_CONN),
+        GameMode::Remote => None,
+    });
     let drafts = use_signal(Vec::<(u64, char)>::new);
     let mut next_local_conn = use_signal(|| LOCAL_CONN + 1);
 
@@ -290,7 +296,9 @@ pub fn MpscGame() -> Element {
                     {
                         div {
                             class: "hud sender-ctl",
-                            style: "left: {fx * 100.0}%; top: {fy * 100.0}%;",
+                            // max() keeps a top-fan sender's controls inside
+                            // the diagram (the translate lifts them ~84px).
+                            style: "left: {fx * 100.0}%; top: max({fy * 100.0}%, 96px);",
                             input {
                                 class: "field",
                                 maxlength: 1,

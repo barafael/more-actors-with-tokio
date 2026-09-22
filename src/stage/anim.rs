@@ -175,6 +175,7 @@ mod tests {
             },
             {
                 let arrived = arrived.clone();
+                let pos = pos.clone();
                 Box::new(move || arrived.set(pos.get()))
             },
         );
@@ -190,14 +191,10 @@ mod tests {
     fn update_clamps_a_huge_dt_and_clear_drops_tweens() {
         let done = Rc::new(Cell::new(false));
         let mut anim = Animator::new();
-        anim.tween(
-            1000.0,
-            |_| {},
-            {
-                let done = done.clone();
-                Box::new(move || done.set(true))
-            },
-        );
+        anim.tween(1000.0, |_| {}, {
+            let done = done.clone();
+            Box::new(move || done.set(true))
+        });
         anim.update(10_000.0);
         assert!(done.get(), "a throttled frame must not jump past done");
 

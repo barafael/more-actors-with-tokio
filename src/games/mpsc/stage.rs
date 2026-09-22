@@ -22,8 +22,12 @@ use crate::stage::{clamp, start_frame_loop, CanvasHost, SharedCanvasHost, Stop};
 
 const DOT_R: f64 = 30.0;
 const SEND_R: f64 = 40.0;
+// Slot geometry is only drawn on wasm; the SSR build never paints.
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 const SLOT_W: f64 = 22.0;
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 const SLOT_H: f64 = 24.0;
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 const SLOT_GAP: f64 = 5.0;
 /// Distance from the receiver dot center to the buffer strip center (px).
 const BUFF_DY: f64 = 76.0;
@@ -35,6 +39,8 @@ const PULL_MS: f64 = 450.0;
 const DRAG_MARGIN_X: f64 = 60.0;
 const DRAG_MARGIN_Y: f64 = 70.0;
 
+/// Node positions are fractions of the canvas (0..1), so a resize needs no
+/// work; each use converts to pixels.
 type Frac = (f64, f64);
 
 #[derive(Default)]
@@ -46,6 +52,7 @@ struct Layout {
 /// A char in the air. The tween writes px into the cells each frame; the
 /// draw pass reads them. `tracked` glyphs mirror a `Flight` and are dropped
 /// when that flight lands; pull glyphs are purely local cosmetics.
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 struct Glyph {
     key: u64,
     ch: char,
@@ -84,12 +91,7 @@ impl Stage {
         let layout = Rc::new(RefCell::new(Layout::default()));
         let glyphs = Rc::new(RefCell::new(Vec::new()));
         let draw = {
-            let (c, a, l, g) = (
-                canvas.clone(),
-                anim.clone(),
-                layout.clone(),
-                glyphs.clone(),
-            );
+            let (c, a, l, g) = (canvas.clone(), anim.clone(), layout.clone(), glyphs.clone());
             move |dt: f64, w: f64, h: f64| frame(&c, &a, &l, &g, snap, flights, dt, w, h)
         };
         let stop = start_frame_loop(&canvas, draw);
@@ -318,6 +320,7 @@ fn slot_xy(dot: (f64, f64), i: usize) -> (f64, f64) {
 
 /// One frame: refresh geometry, spawn/prune glyphs from the live flight
 /// list, advance tweens, paint.
+#[allow(clippy::too_many_arguments)]
 fn frame(
     canvas: &SharedCanvasHost,
     anim: &Rc<RefCell<Animator>>,
@@ -354,9 +357,7 @@ fn sync_glyphs(
             .borrow_mut()
             .retain(|g| !g.tracked || live_keys.contains(&g.key));
     }
-    // The buffer shows settled chars only; the slots after it belong to
-    // flights already in the air, oldest first (launch order == sim order).
-    let mut slot = snap.buffer.len() + glyphs.borrow().iter().filter(|g| g.tracked).count();
+    let base_slot = snap.buffer.len() + glyphs.borrow().iter().filter(|g| g.tracked).count();
     let pending: Vec<Glyph> = {
         let known: BTreeSet<u64> = glyphs.borrow().iter().map(|g| g.key).collect();
         let (w, h) = canvas.size();
@@ -369,9 +370,8 @@ fn sync_glyphs(
             })
             .collect()
     };
-    for glyph in pending {
-        push_tween(anim, canvas, layout, glyphs, glyph, slot, SEND_MS);
-        slot += 1;
+    for (i, glyph) in pending.into_iter().enumerate() {
+        push_tween(anim, canvas, layout, glyphs, glyph, base_slot + i, SEND_MS);
     }
 }
 
@@ -417,7 +417,14 @@ fn draw(
                     filled.map(|c| palette::sender_hex(c.conn)),
                 );
                 if let Some(owned) = filled {
-                    text(ctx, &owned.ch.to_string(), x, y, "#000", "bold 14px sans-serif");
+                    text(
+                        ctx,
+                        &owned.ch.to_string(),
+                        x,
+                        y,
+                        "#000",
+                        "bold 14px sans-serif",
+                    );
                 }
             }
             text(
@@ -455,11 +462,12 @@ fn draw(
                 .iter()
                 .find(|b| b.conn == sender.conn)
                 .map(|b| b.ch.to_string());
-            ctx.set_fill_style_str(if sender.blocked {
-                "#9e9e9e"
+            let fill = if sender.blocked {
+                "#9e9e9e".to_string()
             } else {
-                palette::sender_hex(sender.conn).as_str()
-            });
+                palette::sender_hex(sender.conn)
+            };
+            ctx.set_fill_style_str(fill.as_str());
             ctx.begin_path();
             let _ = ctx.arc(x, y, SEND_R, 0.0, std::f64::consts::TAU);
             ctx.fill();
@@ -486,7 +494,14 @@ fn draw(
             let _ = ctx.arc(x, y, 12.0, 0.0, std::f64::consts::TAU);
             ctx.fill();
             ctx.stroke();
-            text(ctx, &glyph.ch.to_string(), x, y, "#000", "bold 14px sans-serif");
+            text(
+                ctx,
+                &glyph.ch.to_string(),
+                x,
+                y,
+                "#000",
+                "bold 14px sans-serif",
+            );
         }
     });
 }
@@ -540,14 +555,7 @@ fn draw_arrow(
 }
 
 #[cfg(target_arch = "wasm32")]
-fn text(
-    ctx: &web_sys::CanvasRenderingContext2d,
-    s: &str,
-    x: f64,
-    y: f64,
-    color: &str,
-    font: &str,
-) {
+fn text(ctx: &web_sys::CanvasRenderingContext2d, s: &str, x: f64, y: f64, color: &str, font: &str) {
     ctx.set_fill_style_str(color);
     ctx.set_font(font);
     ctx.set_text_align("center");
@@ -556,6 +564,7 @@ fn text(
 }
 
 #[cfg(target_arch = "wasm32")]
+#[allow(clippy::too_many_arguments)]
 fn round_rect(
     ctx: &web_sys::CanvasRenderingContext2d,
     x: f64,
@@ -572,11 +581,11 @@ fn round_rect(
     ctx.begin_path();
     ctx.move_to(x + r, y);
     ctx.line_to(x + w - r, y);
-    ctx.arc(x + w - r, y + r, r, -std::f64::consts::FRAC_PI_2, 0.0);
+    let _ = ctx.arc(x + w - r, y + r, r, -std::f64::consts::FRAC_PI_2, 0.0);
     ctx.line_to(x + w, y + h - r);
-    ctx.arc(x + w - r, y + h - r, r, 0.0, std::f64::consts::FRAC_PI_2);
+    let _ = ctx.arc(x + w - r, y + h - r, r, 0.0, std::f64::consts::FRAC_PI_2);
     ctx.line_to(x + r, y + h);
-    ctx.arc(
+    let _ = ctx.arc(
         x + r,
         y + h - r,
         r,
@@ -584,7 +593,7 @@ fn round_rect(
         std::f64::consts::PI,
     );
     ctx.line_to(x, y + r);
-    ctx.arc(
+    let _ = ctx.arc(
         x + r,
         y + r,
         r,

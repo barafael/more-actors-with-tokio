@@ -30,11 +30,7 @@ pub struct Node {
 
 impl Node {
     pub fn new(x: f64, y: f64) -> Self {
-        Self {
-            x,
-            y,
-            scale: 1.0,
-        }
+        Self { x, y, scale: 1.0 }
     }
 }
 
@@ -117,7 +113,7 @@ impl CanvasHost {
         canvas.set_width((w * dpr).round() as u32);
         canvas.set_height((h * dpr).round() as u32);
         if let Some(ctx) = self.context.borrow().clone() {
-            ctx.set_transform(dpr, 0.0, 0.0, dpr, 0.0, 0.0);
+            let _ = ctx.set_transform(dpr, 0.0, 0.0, dpr, 0.0, 0.0);
         }
         self.size.set((w, h));
         true
@@ -137,8 +133,11 @@ impl CanvasHost {
 pub struct Stop {
     stopped: Rc<Cell<bool>>,
     #[cfg(target_arch = "wasm32")]
-    _keepalive: Rc<RefCell<Option<wasm_bindgen::closure::Closure<dyn FnMut(f64)>>>>,
+    _keepalive: Rc<RefCell<Option<FrameClosure>>>,
 }
+
+#[cfg(target_arch = "wasm32")]
+type FrameClosure = wasm_bindgen::closure::Closure<dyn FnMut(f64)>;
 
 impl Stop {
     pub fn stop(&self) {
@@ -160,15 +159,14 @@ pub fn start_frame_loop(
     let stopped = Rc::new(Cell::new(false));
 
     #[cfg(target_arch = "wasm32")]
-    let keepalive: Rc<RefCell<Option<wasm_bindgen::closure::Closure<dyn FnMut(f64)>>>> = {
+    let keepalive: Rc<RefCell<Option<FrameClosure>>> = {
         use wasm_bindgen::JsCast;
         let host = host.clone();
         let stop_flag = stopped.clone();
         // Self-referential: the closure re-registers itself each frame, so
         // `keepalive` must own one strong reference while running. `Stop`
         // clears it, breaking the cycle.
-        let frame: Rc<RefCell<Option<wasm_bindgen::closure::Closure<dyn FnMut(f64)>>>> =
-            Rc::new(RefCell::new(None));
+        let frame: Rc<RefCell<Option<FrameClosure>>> = Rc::new(RefCell::new(None));
         let rearm = frame.clone();
         let mut last = crate::sim::now_ms();
         *frame.borrow_mut() = Some(wasm_bindgen::closure::Closure::new(move |_t| {
@@ -184,7 +182,7 @@ pub fn start_frame_loop(
             let re_fn: Option<js_sys::Function> = rearm
                 .borrow()
                 .as_ref()
-                .map(|c| c.as_ref().unchecked_ref::<js_sys::Function>());
+                .map(|c| c.as_ref().unchecked_ref::<js_sys::Function>().clone());
             if let (Some(window), Some(re)) = (web_sys::window(), re_fn) {
                 let _ = window.request_animation_frame(&re);
             }
@@ -192,7 +190,7 @@ pub fn start_frame_loop(
         let first: Option<js_sys::Function> = frame
             .borrow()
             .as_ref()
-            .map(|c| c.as_ref().unchecked_ref::<js_sys::Function>());
+            .map(|c| c.as_ref().unchecked_ref::<js_sys::Function>().clone());
         if let (Some(window), Some(re)) = (web_sys::window(), first) {
             let _ = window.request_animation_frame(&re);
         }
