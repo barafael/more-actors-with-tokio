@@ -159,6 +159,7 @@ impl MpscSim {
             conn,
             owner,
             blocked: false,
+            blocked_since: None,
         });
         self.core.add_sender();
         vec![MpscEvent::SenderJoined { conn, owner }]
@@ -237,6 +238,9 @@ impl MpscSim {
     fn set_blocked(&mut self, conn: u64, blocked: bool) {
         for sender in self.senders.iter_mut().filter(|s| s.conn == conn) {
             sender.blocked = blocked;
+            // stamp the wait so the node can count how long the full queue
+            // has held this send; cleared the moment it takes off
+            sender.blocked_since = blocked.then_some(self.now);
         }
     }
 
@@ -727,6 +731,7 @@ impl BroadcastSim {
                 conn: BROADCAST_HOST_CONN,
                 owner: BROADCAST_HOST_CONN,
                 blocked: false,
+                blocked_since: None,
             }],
             slots: BTreeMap::new(),
             receivers: Vec::new(),
@@ -782,6 +787,7 @@ impl BroadcastSim {
             conn,
             owner: requester,
             blocked: false,
+            blocked_since: None,
         });
         self.core.add_sender();
         vec![BroadcastEvent::SenderJoined {
@@ -939,6 +945,7 @@ impl BroadcastSim {
                 conn: BROADCAST_HOST_CONN,
                 owner: conn,
                 blocked: false,
+                blocked_since: None,
             });
             self.core.add_sender();
             events.push(BroadcastEvent::SenderJoined {
@@ -1216,6 +1223,42 @@ mod tests {
             .handle(&MpscWire::CloneSender { conn: 8 }, 99)
             .is_empty());
         assert!(!sim.contains_sender(8));
+    }
+
+    #[test]
+    fn a_blocked_send_counts_its_wait_and_never_times_out() {
+        let mut sim = sim_with_two_senders();
+        // fill the buffer so the next send parks
+        for i in 0..CAP {
+            send(&mut sim, 1, char::from_u32('a' as u32 + i as u32).unwrap());
+        }
+        sim.advance(FLIGHT);
+        let _ = sim.poll_due();
+
+        let _ = sim.handle(&MpscWire::Send { conn: 2, ch: 'z' }, 2);
+        let snap = sim.snapshot();
+        let s2 = snap.senders.iter().find(|s| s.conn == 2).unwrap();
+        assert!(s2.blocked);
+        assert_eq!(s2.blocked_since, Some(FLIGHT), "parked at the send instant");
+
+        // the wait only grows: nothing frees a blocked sender but a receive
+        sim.advance(2_500.0);
+        let snap = sim.snapshot();
+        assert_eq!(
+            snap.senders
+                .iter()
+                .find(|s| s.conn == 2)
+                .unwrap()
+                .blocked_since,
+            Some(FLIGHT)
+        );
+
+        // a receive frees a slot, the parked send takes off, the clock stops
+        let _ = sim.handle(&MpscWire::Receive, 0);
+        let snap = sim.snapshot();
+        let s2 = snap.senders.iter().find(|s| s.conn == 2).unwrap();
+        assert!(!s2.blocked);
+        assert_eq!(s2.blocked_since, None);
     }
 
     #[test]

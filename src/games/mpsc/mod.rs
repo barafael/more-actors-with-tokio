@@ -15,6 +15,7 @@ use crate::sim::{now_ms, MpscSim, LOCAL_CONN};
 use crate::{AppCtx, GameMode};
 
 use crate::games::palette;
+use crate::games::ticker::{subscribe, use_clock};
 use layout::{ARROW_X0, ARROW_X1, RECEIVER_CY};
 use state::{ChannelState, Flight};
 
@@ -193,6 +194,7 @@ pub fn MpscGame() -> Element {
                 NodeView {
                     sender: *s,
                     label,
+                    since: s.blocked_since,
                     top,
                     height,
                 }
@@ -221,6 +223,16 @@ pub fn MpscGame() -> Element {
             })
             .collect::<Vec<ControlsView>>()
     });
+
+    // While a send is parked on the full queue its node counts the wait.
+    // Subscribing to the frame clock re-renders the game every frame for
+    // exactly as long as someone is blocked; the moment the queue frees,
+    // the subscription lapses and the game goes quiet again.
+    let clock = use_clock();
+    let any_blocked = use_memo(move || chan.snap.read().senders.iter().any(|s| s.blocked));
+    if any_blocked() {
+        subscribe(clock);
+    }
 
     let blocked_count = use_memo(move || {
         chan.snap
@@ -299,8 +311,16 @@ pub fn MpscGame() -> Element {
 struct NodeView {
     sender: SenderInfo,
     label: String,
+    since: Option<f64>,
     top: f64,
     height: f64,
+}
+
+/// Whole seconds this send has been parked on the full queue. It grows
+/// without bound by design: tokio never times out a blocked send — the
+/// count only stops when a receive frees a slot.
+fn blocked_seconds(since: f64) -> u64 {
+    ((now_ms() - since) / 1000.0).floor().max(0.0) as u64
 }
 
 #[component]
@@ -317,6 +337,9 @@ fn SenderNode(node: NodeView) -> Element {
             style: "top: {node.top}%; height: {node.height}%; --c: {palette::sender_hex(s.conn)}; --fg: {palette::sender_text_color(s.conn)};",
             title: title,
             "{node.label}"
+            if let Some(since) = node.since {
+                span { class: "blocked-clock", "{blocked_seconds(since)}s" }
+            }
         }
     }
 }

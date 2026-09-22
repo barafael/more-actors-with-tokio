@@ -289,6 +289,19 @@ strong {
     background: #e8e3d6;
     color: var(--color-dimmed);
     border-style: dashed;
+    flex-direction: column;
+    gap: 3px;
+}
+
+/* how long this send has been parked on the full queue; counts up until a
+   receive frees it — tokio has no send timeout, so neither does the game */
+.blocked-clock {
+    font: 700 11px var(--font-label);
+    color: var(--ink);
+    background: color-mix(in srgb, var(--color-highlight) 24%, #fff);
+    border: 1.5px solid var(--color-highlight);
+    padding: 0 5px;
+    line-height: 1.5;
 }
 
 /* one input + send per owned sender, left of its rectangle */
