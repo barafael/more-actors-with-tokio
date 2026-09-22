@@ -1,5 +1,12 @@
 Port Plan: Dioxus games → standalone-stage look, then marp removal
 
+> Status: parked. The canvas port was implemented for mpsc (Part A + B1)
+> and lives on the `abstellgleis/canvas-stage` branch. Main stayed with
+> the pure-HTML presentation: drag-and-drop was judged not worth a second
+> renderer, the CSS keyframe flights cover the animation needs, and fixed
+> percentage layouts need no per-node geometry at all. This file is kept
+> for the record and in case the stage ever comes back.
+
 The standalone canvas games (mpsc.js, oneshot.js, watch.js, broadcast.js +
 lib/anim.js, lib/channel.js, lib/live.css) are the reference for look and
 feel. The Dioxus games keep everything below the presentation layer — sims,

@@ -36,10 +36,12 @@ warns).
 - **`main.css` here is a byte-copy of `assets/main.css`**, refreshed by
   the exporter on every run. Never hand-edit it; edit the asset and
   re-export.
-- **The games render their static DOM diagram in the export.** The
-  canvas stage (draggable nodes, tweened glyphs) only takes over after
-  hydration, so the print view and the live view share one component
-  tree but not one renderer.
+- **The games render their static DOM diagram everywhere** — absolutely
+  positioned nodes, SVG arrows, CSS keyframe flights. There is no
+  second renderer: what the print view shows is what the live client
+  animates. (An experimental canvas stage lives on the
+  `abstellgleis/canvas-stage` branch; main is deliberately HTML-only —
+  drag-and-drop was dropped, the keyframe animations were kept.)
 - **Local mode has no `Hello`.** The player identity arrives over the
   game websocket, which does not exist single-player — games must seed
   the local identity themselves (mpsc seeds `Some(LOCAL_CONN)`, watch

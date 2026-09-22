@@ -4,10 +4,7 @@
 //! frees a slot. Blocked senders wake in FIFO order, like tokio's.
 
 mod layout;
-mod stage;
 mod state;
-
-use std::rc::Rc;
 
 use dioxus::prelude::*;
 
@@ -130,20 +127,6 @@ pub fn MpscGame() -> Element {
     let drafts = use_signal(Vec::<(u64, char)>::new);
     let mut next_local_conn = use_signal(|| LOCAL_CONN + 1);
 
-    // The stage is created once and lives for the component's lifetime. Its
-    // frame loop no-ops on the server, so the static diagram below is what
-    // the export renders.
-    let stage = use_hook(|| Rc::new(stage::Stage::new(chan.snap, chan.flights)));
-    use_drop({
-        let stage = stage.clone();
-        move || stage.stop()
-    });
-    // Client-only: the static diagram is swapped for the canvas after the
-    // real DOM exists (SSR never fires mount events), so hydration matches.
-    let mut mounted = use_signal(|| false);
-    // Bumped by drag handlers so the overlay re-reads node fractions.
-    let mut hud = use_signal(|| 0u32);
-
     let conn = use_game_connection::<MpscEvent>("/ws/game/mpsc", move |event| {
         if let MpscEvent::Hello { conn } = event {
             my_conn.set(Some(conn));
@@ -248,131 +231,34 @@ pub fn MpscGame() -> Element {
             .count()
     });
 
-    // The overlay reads node fractions each render; reading the snapshot
-    // subscribes this component to state changes, and `hud()` to drags.
-    let snap = chan.snap.read().clone();
-    let node_fracs = stage.sender_fracs(&snap);
-    let dot_frac = stage.dot_frac(&snap);
-    let _hud_tick = hud();
-
-    let (h_mount, h_down, h_move, h_up, h_leave, h_pull) = (
-        stage.clone(),
-        stage.clone(),
-        stage.clone(),
-        stage.clone(),
-        stage.clone(),
-        stage.clone(),
-    );
-
     rsx! {
         div { class: "diagram",
-            onmounted: move |_| mounted.set(true),
             div { class: "game-header", "mpsc" }
             div { class: "status", "{conn.status}" }
 
-            if mounted() {
-                canvas {
-                    class: "stage-canvas",
-                    onmounted: move |ev: MountedEvent| h_mount.canvas().handle_mounted(&ev),
-                    onpointerdown: move |ev: PointerEvent| {
-                        let p = ev.data().element_coordinates();
-                        h_down.pointer_down(p.x, p.y);
-                    },
-                    onpointermove: move |ev: PointerEvent| {
-                        let p = ev.data().element_coordinates();
-                        if h_move.pointer_move(p.x, p.y) {
-                            hud.with_mut(|tick| *tick += 1);
-                        }
-                    },
-                    onpointerup: move |_| h_up.pointer_up(),
-                    onpointerleave: move |_| h_leave.pointer_up(),
-                }
+            ArrowLayer { senders: senders() }
 
-                for view in controls() {
-                    if let Some((fx, fy)) = node_fracs
-                        .iter()
-                        .find(|(c, _)| *c == view.conn)
-                        .map(|(_, p)| *p)
-                    {
-                        div {
-                            class: "hud sender-ctl",
-                            // max() keeps a top-fan sender's controls inside
-                            // the diagram (the translate lifts them ~84px).
-                            style: "left: {fx * 100.0}%; top: max({fy * 100.0}%, 96px);",
-                            input {
-                                class: "field",
-                                maxlength: 1,
-                                disabled: view.blocked,
-                                value: view.draft,
-                                oninput: move |e| set_draft(drafts, view.conn, e.value().chars().next()),
-                            }
-                            button {
-                                class: "btn send",
-                                disabled: view.blocked,
-                                onclick: move |_| send_from(conn, sim, chan, drafts, view.conn),
-                                "send"
-                            }
-                        }
-                    }
-                }
+            for node in nodes() {
+                SenderNode { key: "{node.sender.conn}", node: node }
+            }
 
-                div {
-                    class: if snap.waiting_receive { "hud receiver-hud waiting" } else { "hud receiver-hud" },
-                    style: "left: {dot_frac.0 * 100.0}%; top: calc({dot_frac.1 * 100.0}% + 120px);",
-                    button {
-                        class: "btn rcv",
-                        disabled: !conn.connected(),
-                        onclick: move |_| {
-                            {
-                                let snap = chan.snap.read();
-                                if let Some(oldest) = snap.buffer.first() {
-                                    h_pull.on_receive_pull(oldest.ch, oldest.conn);
-                                }
-                            }
-                            dispatch(conn, sim, chan, MpscWire::Receive);
-                        },
-                        "Receive"
-                    }
-                    span { class: "recv-label",
-                        { match snap.last_received {
-                            Some(owned) => rsx! {
-                                span { style: "color: {palette::sender_hex(owned.conn)};", "→ {owned.ch}" }
-                            },
-                            None => rsx! { "→ –" },
-                        } }
-                    }
-                    span { class: "note-pill occupancy", "buffer {snap.buffer.len() + snap.in_flight} / {MPSC_CAPACITY}" }
-                }
+            FlightLayer { flights: flights(), senders: senders() }
 
-                div { class: "stage-legend",
-                    span { class: "legend-tx", "sender" }
-                    span { class: "legend-dot", "receiver" }
-                }
-            } else {
-                ArrowLayer { senders: senders() }
+            ReceiverPanel {
+                snapshot: chan.snap.read().clone(),
+                connected: conn.connected(),
+                onreceive: move |_| dispatch(conn, sim, chan, MpscWire::Receive),
+            }
 
-                for node in nodes() {
-                    SenderNode { key: "{node.sender.conn}", node: node }
-                }
-
-                FlightLayer { flights: flights(), senders: senders() }
-
-                ReceiverPanel {
-                    snapshot: snap.clone(),
-                    connected: conn.connected(),
-                    onreceive: move |_| dispatch(conn, sim, chan, MpscWire::Receive),
-                }
-
-                for view in controls() {
-                    SenderControls {
-                        key: "{view.conn}",
-                        conn: view.conn,
-                        blocked: view.blocked,
-                        cy: view.cy,
-                        draft: view.draft,
-                        ondraft: move |ch| set_draft(drafts, view.conn, ch),
-                        onsend: move |_| send_from(conn, sim, chan, drafts, view.conn),
-                    }
+            for view in controls() {
+                SenderControls {
+                    key: "{view.conn}",
+                    conn: view.conn,
+                    blocked: view.blocked,
+                    cy: view.cy,
+                    draft: view.draft,
+                    ondraft: move |ch| set_draft(drafts, view.conn, ch),
+                    onsend: move |_| send_from(conn, sim, chan, drafts, view.conn),
                 }
             }
 

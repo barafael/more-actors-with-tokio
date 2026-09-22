@@ -2282,7 +2282,6 @@ dependencies = [
  "futures-channel",
  "futures-util",
  "gloo-timers",
- "js-sys",
  "qrcode",
  "serde",
  "serde_json",

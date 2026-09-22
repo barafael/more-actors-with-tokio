@@ -147,7 +147,9 @@ impl MpscSim {
     }
 
     /// A new `Sender<T>` handle appears: a freshly connected client
-    /// (`owner == conn`) or a clone (`owner` = the handle cloned from).
+    /// (`owner == conn`) or a clone (`owner` = the connection that cloned).
+    /// Either way it is its own sender: clones are peers, not children —
+    /// nothing about one is shared with or owned by the handle it came from.
     pub fn add_sender(&mut self, conn: u64, owner: u64) -> Vec<MpscEvent> {
         if self.contains_sender(conn) {
             return Vec::new();
@@ -1214,6 +1216,36 @@ mod tests {
             .handle(&MpscWire::CloneSender { conn: 8 }, 99)
             .is_empty());
         assert!(!sim.contains_sender(8));
+    }
+
+    #[test]
+    fn a_clone_is_an_autonomous_sender() {
+        let mut sim = sim_with_two_senders();
+        let _ = sim.handle(&MpscWire::CloneSender { conn: 7 }, 1);
+
+        // a clone is a peer, not a child: dropping the handle it was
+        // cloned from leaves it untouched
+        let _ = sim.remove_sender(1);
+        assert!(sim.contains_sender(7));
+        assert!(!sim.contains_sender(1));
+
+        // it sends under its own identity
+        let events = sim.handle(&MpscWire::Send { conn: 7, ch: 'x' }, 7);
+        assert_eq!(events, vec![MpscEvent::InFlight { conn: 7, ch: 'x' }]);
+
+        // and blocks under its own identity, independent of every other
+        // handle's state ('x' already took one slot, so CAP-1 fills the
+        // buffer and the next send from the clone must park)
+        for i in 0..CAP - 1 {
+            send(&mut sim, 2, char::from_u32('a' as u32 + i as u32).unwrap());
+        }
+        sim.advance(FLIGHT);
+        let _ = sim.poll_due();
+        let _ = sim.handle(&MpscWire::Send { conn: 7, ch: 'y' }, 7);
+        let snap = sim.snapshot();
+        assert!(snap.senders.iter().find(|s| s.conn == 7).unwrap().blocked);
+        assert_eq!(snap.blocked_sends.len(), 1);
+        assert_eq!(snap.blocked_sends[0].conn, 7);
     }
 
     #[test]
