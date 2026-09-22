@@ -5,7 +5,12 @@ pub const SLIDE_COUNT: usize = 9;
 pub const MPSC_CAPACITY: usize = 5;
 
 /// Capacity of the broadcast channel's ring buffer.
+/// How many values the broadcast ring buffer retains.
 pub const BROADCAST_CAPACITY: usize = 5;
+/// Demo guard, not channel semantics: how many receivers one connection may
+/// hold. Tokio's `subscribe()` is unbounded; the game caps it so a crafted
+/// client cannot balloon the receiver table.
+pub const BROADCAST_MAX_RX: usize = 8;
 
 /// Per-owner cap on live receivers for the watch game.
 pub const WATCH_MAX_RX: usize = 6;

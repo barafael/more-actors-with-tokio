@@ -18,7 +18,8 @@ use crate::clock::Ticking;
 use crate::protocol::{
     BroadcastError, BroadcastEvent, BroadcastSnapshot, BroadcastWire, BufferChar, ButtonEvent,
     ButtonState, ButtonWire, Color, MpscEvent, MpscSnapshot, MpscWire, RxInfo, RxState, SenderInfo,
-    WatchEvent, WatchSnapshot, WatchWire, BROADCAST_CAPACITY, MPSC_CAPACITY, WATCH_MAX_RX,
+    WatchEvent, WatchSnapshot, WatchWire, BROADCAST_CAPACITY, BROADCAST_MAX_RX, MPSC_CAPACITY,
+    WATCH_MAX_RX,
 };
 
 /// Connection id used by the local (single-player) client.
@@ -791,13 +792,12 @@ impl BroadcastSim {
 
     /// A new receiver starts at the tail (tokio's `subscribe`): it sees every
     /// value sent from now on, and none of the history still in the buffer.
-    /// One receiver per connection.
+    /// Like tokio's, it is a method on the sender and every call yields a
+    /// fresh, independent receiver — a connection may hold many, each
+    /// consuming at its own pace. The per-owner cap is a demo guard against
+    /// a crafted client, not channel semantics.
     fn subscribe(&mut self, conn: u64) -> Vec<BroadcastEvent> {
-        if self
-            .receivers
-            .iter()
-            .any(|r| r.owner == conn || r.conn == conn)
-        {
+        if self.owned_receivers(conn).len() >= BROADCAST_MAX_RX {
             return Vec::new();
         }
         let receiver = self.next_receiver;
@@ -2012,11 +2012,53 @@ mod broadcast_tests {
     }
 
     #[test]
-    fn one_receiver_per_connection() {
+    fn every_subscribe_call_yields_an_independent_receiver() {
         let mut sim = BroadcastSim::new();
+        // subscribe() is a method on Sender: calling it twice — even from
+        // the same connection — yields two peers, both starting at the tail
         let first = subscribe(&mut sim, 2);
-        assert!(sim.handle(&BroadcastWire::Subscribe, 2).is_empty());
-        assert_eq!(sim.owned_receivers(2), vec![first]);
+        let second = subscribe(&mut sim, 2);
+        assert_ne!(first, second);
+        assert_eq!(sim.owned_receivers(2), vec![first, second]);
+        assert_eq!(rx(&sim, first).next, rx(&sim, second).next);
+
+        // fan-out: one send is deliverable to both, each at its own pace
+        bsend(&mut sim, BROADCAST_HOST_CONN, 'a');
+        assert_eq!(
+            recv(&mut sim, first, 2),
+            vec![BroadcastEvent::Received {
+                receiver: first,
+                ch: 'a'
+            }]
+        );
+        assert!(
+            rx(&sim, second).last.is_none(),
+            "the other has not recv()d yet"
+        );
+        assert_eq!(
+            recv(&mut sim, second, 2),
+            vec![BroadcastEvent::Received {
+                receiver: second,
+                ch: 'a'
+            }]
+        );
+    }
+
+    #[test]
+    fn the_demo_caps_receivers_per_owner() {
+        let mut sim = BroadcastSim::new();
+        for _ in 0..BROADCAST_MAX_RX {
+            subscribe(&mut sim, 2);
+        }
+        assert_eq!(sim.snapshot().receivers.len(), BROADCAST_MAX_RX);
+        assert!(
+            sim.handle(&BroadcastWire::Subscribe, 2).is_empty(),
+            "the cap holds regardless of what the client allows"
+        );
+
+        // the cap is per owner: another subscriber is unaffected
+        subscribe(&mut sim, 5);
+        assert_eq!(sim.snapshot().receivers.len(), BROADCAST_MAX_RX + 1);
     }
 
     #[test]

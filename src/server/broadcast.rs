@@ -20,7 +20,9 @@ pub enum BroadcastMsg {
     Send { conn: u64, handle: u64, ch: char },
     /// Clone the sender `source` for `requester`.
     Clone { requester: u64, source: u64 },
-    /// Subscribe a receiver owned by `conn` (one per connection).
+    /// Subscribe a fresh receiver owned by `conn` — like tokio's
+    /// `subscribe()`, every call yields a new independent receiver (the sim
+    /// caps how many one connection may hold).
     Subscribe { conn: u64 },
     /// Receive on a receiver `conn` owns.
     Receive { conn: u64, receiver: u64 },

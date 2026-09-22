@@ -186,14 +186,18 @@ pub fn BroadcastGame() -> Element {
     let senders = use_memo(move || chan.snap.read().senders.clone());
     let receivers = use_memo(move || chan.snap.read().receivers.clone());
     let flights = use_memo(move || chan.flights.read().clone());
-    let my_receiver = use_memo(move || {
+    let my_receivers = use_memo(move || {
         chan.snap
             .read()
             .receivers
             .iter()
-            .find(|r| Some(r.owner) == my_conn())
+            .filter(|r| Some(r.owner) == my_conn())
             .map(|r| r.receiver)
+            .collect::<Vec<u64>>()
     });
+    // Rapid-fire values for the burst button, so digits stay unique within
+    // a burst and across bursts until the counter wraps at 10^4.
+    let mut burst_counter = use_signal(|| 0u32);
     let closed = use_memo(move || senders().is_empty());
 
     let nodes = use_memo(move || {
@@ -253,8 +257,8 @@ pub fn BroadcastGame() -> Element {
                         style: "top: {view.top + view.height + 1.0}%; left: {SENDERS_LEFT}%; width: {SENDERS_WIDTH}%;",
                         button {
                             class: "btn small",
-                            disabled: !conn.connected() || my_receiver().is_some(),
-                            title: "subscribe a receiver via this sender — it starts at the tail, so it only sees values sent from now on (one per client)",
+                            disabled: !conn.connected() || closed(),
+                            title: "subscribe another receiver via this sender — like tx.subscribe(), every click adds an independent receiver that starts at the tail and only sees values sent from now on",
                             onclick: move |_| {
                                 dispatch(conn, sim, &chan, BroadcastWire::Subscribe);
                             },
@@ -341,10 +345,35 @@ pub fn BroadcastGame() -> Element {
                 if closed() {
                     span { class: "note-pill blocked", "closed" }
                 }
-                if let Some(receiver) = my_receiver() {
-                    span { class: "note-pill", "rx #{receiver}" }
+                {
+                    match my_receivers().as_slice() {
+                        [] => rsx! {},
+                        [one] => rsx! { span { class: "note-pill", "rx #{one}" } },
+                        many => rsx! { span { class: "note-pill", "rx ×{many.len()} yours" } },
+                    }
                 }
                 if ctx.may_present() {
+                    button {
+                        class: "btn",
+                        disabled: !conn.connected() || closed(),
+                        title: "seven rapid sends from your first sender — overflows the ring, evicts the oldest values, and strands any receiver that has not kept up",
+                        onclick: move |_| {
+                            let Some(sender) = senders()
+                                .iter()
+                                .find(|s| Some(s.owner) == my_conn())
+                                .map(|s| s.conn)
+                            else {
+                                return;
+                            };
+                            for i in 0..7u32 {
+                                let ch =
+                                    char::from_digit((burst_counter() + i) % 10, 10).unwrap();
+                                dispatch(conn, sim, &chan, BroadcastWire::Send { conn: sender, ch });
+                            }
+                            burst_counter.set((burst_counter() + 7) % 10_000);
+                        },
+                        "burst ×7"
+                    }
                     button {
                         class: "btn",
                         disabled: !conn.connected(),
