@@ -61,14 +61,17 @@ fn Race(snapshot: SelectSnapshot, on_press: EventHandler<Color>, enabled: bool) 
 
             div { class: branch_class(button_won, snapshot.armed),
                 div { class: "branch-head", "button.pressed()" }
-                div { class: "branch-body press-row",
+                // plain branch-body: `.press-row` is the button game's
+                // absolute bottom-center tray — borrowing it here would rip
+                // the pads out of the branch and drop them mid-diagram
+                div { class: "branch-body",
                     for color in [Color::Red, Color::Green, Color::Blue] {
                         button {
                             class: "press-pad {color.css_name()}",
                             disabled: !snapshot.armed || !enabled,
                             title: "{color.display()}",
                             onclick: move |_| on_press.call(color),
-                            ""
+                            "{color.display()}"
                         }
                     }
                 }

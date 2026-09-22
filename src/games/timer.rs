@@ -181,10 +181,12 @@ fn restart(
 fn Dial(wall_ms: f64, pending: bool) -> Element {
     let seconds = wall_ms / 1000.0;
     let angle = seconds / 60.0 * std::f64::consts::TAU - std::f64::consts::FRAC_PI_2;
-    let (hand_x, hand_y) = (
-        50.0 + DIAL_R * 0.82 * angle.cos(),
-        50.0 + DIAL_R * 0.82 * angle.sin(),
-    );
+    // the hand starts away from the pivot: the seconds readout lives at the
+    // center, and a hand through it would draw over the number
+    const HAND_INNER: f64 = 15.0;
+    let (sin, cos) = angle.sin_cos();
+    let (x1, y1) = (50.0 + HAND_INNER * cos, 50.0 + HAND_INNER * sin);
+    let (x2, y2) = (50.0 + DIAL_R * 0.82 * cos, 50.0 + DIAL_R * 0.82 * sin);
 
     rsx! {
         svg { class: "timer-dial", view_box: "0 0 100 100", width: "220", height: "220",
@@ -199,7 +201,7 @@ fn Dial(wall_ms: f64, pending: bool) -> Element {
             }
             line {
                 class: if pending { "dial-hand pending" } else { "dial-hand" },
-                x1: "50", y1: "50", x2: "{hand_x}", y2: "{hand_y}",
+                x1: "{x1}", y1: "{y1}", x2: "{x2}", y2: "{y2}",
             }
             text { class: "dial-label", x: "50", y: "56", text_anchor: "middle",
                 "{seconds:.0}"

@@ -73,7 +73,7 @@ pub fn ButtonGame() -> Element {
     };
 
     rsx! {
-        div { class: "diagram",
+        div { class: "diagram button-game",
             div { class: "game-header", "button-future" }
             div { class: "status", "{conn.status}" }
 
@@ -104,7 +104,7 @@ pub fn ButtonGame() -> Element {
                         disabled: state() != ButtonState::Pending || !conn.connected(),
                         title: "{color.display()}",
                         onclick: move |_| dispatch(conn, sim, state, ButtonWire::Press { color }),
-                        ""
+                        "{color.display()}"
                     }
                 }
             }

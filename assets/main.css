@@ -678,6 +678,13 @@ strong {
     border-radius: 10px;
     border: 2px solid var(--ink);
     cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font: bold 0.5rem 'Fira Mono', monospace;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
 }
 
 .press-pad:disabled {
@@ -697,7 +704,18 @@ strong {
     background: var(--color-blue);
 }
 
-.press-row {
+/* inside a select branch a pad is one of three options, not the main
+   target: shrink it to a sibling of the countdown text */
+.branch-body .press-pad {
+    width: 2.7rem;
+    height: 2.2rem;
+    font-size: 0.38rem;
+}
+
+/* the button game's tray of pads, bottom-center of its own diagram only —
+   as an unscoped absolute rule it once dragged the select's pads out of
+   their branch and dropped them mid-diagram */
+.button-game .press-row {
     position: absolute;
     left: 50%;
     bottom: 14%;
@@ -724,6 +742,13 @@ strong {
     align-items: center;
     gap: 8px;
     z-index: 10;
+}
+
+/* the caption under a diagram is a footnote, not a headline: without an
+   explicit size it inherited the deck's projection-scaled body text and
+   collided with the pills and tape stacked above it */
+.game-footer .dim {
+    font: italic 500 clamp(12px, 3.4cqh, 20px) / 1.35 'Bitter', serif;
 }
 
 /* ---- watch game: one fixed sender, a cell holding the value, receivers ---- */
@@ -1014,9 +1039,12 @@ strong {
 }
 
 .buf-slot {
-    width: 3.4rem;
-    height: 3.4rem;
-    font-size: 1.2rem;
+    /* positioned by the component's left/width %; vertical geometry in
+       container units so slots and their labels agree at any scale */
+    top: 46cqh;
+    height: 13cqh;
+    transform: translateY(-50%);
+    font-size: 5.5cqh;
 }
 
 .buf-slot.filled {
@@ -1044,19 +1072,19 @@ strong {
 
 .buffer-label {
     left: 39%;
-    top: 32%;
+    top: calc(46cqh - 11cqh);
 }
 
 .buffer-oldest {
-    top: calc(46% + 2.4rem);
+    top: calc(46cqh + 9cqh);
 }
 
 .buffer-newest {
-    top: calc(46% + 2.4rem);
+    top: calc(46cqh + 9cqh);
 }
 
 .buffer-tail {
-    top: calc(46% + 3.6rem);
+    top: calc(46cqh + 15cqh);
     color: var(--color-highlight);
 }
 
@@ -1329,6 +1357,11 @@ strong {
 .dial-label {
     font: bold 18px 'Fira Mono', monospace;
     fill: var(--color-dimmed);
+    /* cream halo: the sweeping hand passes near the number twice a minute */
+    paint-order: stroke;
+    stroke: rgba(255, 248, 225, 0.9);
+    stroke-width: 5;
+    stroke-linejoin: round;
 }
 
 .timer-readout {

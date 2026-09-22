@@ -21,6 +21,12 @@ use state::{empty_snapshot, Flight, FlightKind, WatchState};
 fn local_sim() -> WatchSim {
     let mut sim = WatchSim::new();
     sim.set_presenter(Some(LOCAL_CONN));
+    // Open on a live channel with two receivers: the slide should show the
+    // mechanism — value cell, fan of cursors — before anyone clicks. An
+    // empty stage reads as a broken export, and restart returns here too.
+    sim.handle(&WatchWire::Create { init: Some('c') }, LOCAL_CONN);
+    sim.handle(&WatchWire::NewReceiver, LOCAL_CONN);
+    sim.handle(&WatchWire::NewReceiver, LOCAL_CONN);
     sim
 }
 
