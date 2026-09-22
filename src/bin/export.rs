@@ -46,7 +46,7 @@ fn page(title: &str, body: &str, nav: Option<&Nav>) -> String {
                     .map(|f| format!("<a href=\"{f}\" rel=\"next\">next &#8250;</a>"))
                     .unwrap_or_else(|| "<span class=\"off\">next &#8250;</span>".to_string()),
             );
-            let style = "<style>\n.export-nav{position:fixed;bottom:8px;left:50%;transform:translateX(-50%);z-index:60;display:flex;gap:10px;align-items:center;font:600 12px 'Fira Mono',monospace;color:#999;background:rgba(255,248,225,.85);border:1px solid rgba(51,51,51,.25);padding:4px 12px;border-radius:999px;user-select:none}\n.export-nav a{color:#eb5b20;text-decoration:none}\n.export-nav a:hover{text-decoration:underline}\n.export-nav .off{opacity:.35}\n</style>\n".to_string();
+            let style = "<style>\n.export-nav{position:fixed;bottom:8px;left:50%;transform:translateX(-50%);z-index:60;display:flex;gap:10px;align-items:center;font:700 12px 'Space Mono',monospace;color:#77705f;background:rgba(250,245,232,.9);border:1px solid rgba(59,56,47,.35);padding:4px 12px;border-radius:0;user-select:none}\n.export-nav a{color:#eb5b20;text-decoration:none}\n.export-nav a:hover{text-decoration:underline}\n.export-nav .off{opacity:.35}\n</style>\n".to_string();
             let bar = format!(
                 "<nav class=\"export-nav\">{prev}<span class=\"count\">{}</span>{next}</nav>\n",
                 nav.counter
@@ -78,7 +78,7 @@ fn page(title: &str, body: &str, nav: Option<&Nav>) -> String {
     format!(
         "<!doctype html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>{title}</title>\n\
          <meta name=\"game-mode\" content=\"local\">\n\
-         <link rel=\"stylesheet\" href=\"https://fonts.googleapis.com/css2?family=Bitter:ital@0;1&amp;family=Fira+Mono&amp;display=swap\">\n\
+         <link rel=\"stylesheet\" href=\"https://fonts.googleapis.com/css2?family=Bitter:ital@0;1&amp;family=Fira+Mono&amp;family=Patrick+Hand&amp;family=Space+Mono:wght@400;700&amp;display=swap\">\n\
          <link rel=\"stylesheet\" href=\"main.css\">\n\
          <script>{STREAMING_INIT}</script>\n\
          {nav_style}\

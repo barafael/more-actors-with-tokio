@@ -1,14 +1,21 @@
-/* main.css — marp rhea/gaia visual language + JS-minigame primitives */
+/* main.css — paper-and-ink visual language + minigame primitives.
+   Palette: warm paper, one terracotta accent, desaturated primaries.
+   Identity fills stay pastel via color-mix; borders and glyphs carry the
+   full hue so values stay readable on paper. */
 
 :root {
-    --color-foreground: #333;
-    --color-highlight: #eb5b20;
-    --color-dimmed: #6b6b6b;
-    --color-background: #fff8e1;
-    --color-red: #d32f2f;
-    --color-green: #2e7d32;
-    --color-blue: #1976d2;
-    --ink: #333;
+    --color-foreground: #3b382f;
+    --color-highlight: #c95d34;
+    --color-dimmed: #77705f;
+    --color-background: #faf5e8;
+    --color-red: #c0574f;
+    --color-green: #5f8f5a;
+    --color-blue: #5b84a8;
+    --ink: #3b382f;
+    /* diagram labels and controls; code blocks pin Fira Mono themselves */
+    --font-label: 'Space Mono', 'Fira Mono', monospace;
+    /* hand-annotated margin notes */
+    --font-hand: 'Patrick Hand', 'Bitter', cursive;
 }
 
 * {
@@ -106,7 +113,7 @@ strong {
     font-size: 0.62rem;
     line-height: 1.35;
     background: #fff;
-    border-radius: 6px;
+    border-radius: 0;
     padding: 0.9rem 1.2rem;
     border: 1px solid #e8dfc0;
     margin: 1em 0 0;
@@ -138,7 +145,7 @@ strong {
     gap: 1rem;
     padding: 6px 14px;
     background: rgba(0, 0, 0, 0.65);
-    border-radius: 999px;
+    border-radius: 0;
 
     /* marp idiom: out of the way until the mouse moves. Opacity rather
        than display so the bar does not reflow the slide under it. */
@@ -184,7 +191,7 @@ strong {
 }
 
 .counter {
-    font-family: 'Fira Mono', monospace;
+    font-family: var(--font-label);
     min-width: 5rem;
     text-align: center;
 }
@@ -201,7 +208,7 @@ strong {
     position: relative;
     margin-top: 0.6rem;
     border: 2px solid rgba(51, 51, 51, 0.25);
-    border-radius: 8px;
+    border-radius: 0;
     height: 52vh;
     min-height: 300px;
     container-type: size;
@@ -218,13 +225,13 @@ strong {
     top: 10px;
     right: 14px;
     z-index: 20;
-    font: 600 13px 'Fira Mono', monospace;
+    font: 600 13px var(--font-label);
     letter-spacing: 0.5px;
     color: #999;
-    background: rgba(255, 248, 225, 0.75);
+    background: rgba(252, 248, 238, 0.85);
     border: 1px solid rgba(51, 51, 51, 0.25);
     padding: 5px 11px;
-    border-radius: 999px;
+    border-radius: 0;
     pointer-events: none;
     user-select: none;
 }
@@ -234,13 +241,13 @@ strong {
     top: 10px;
     left: 14px;
     z-index: 20;
-    font: 600 13px 'Fira Mono', monospace;
+    font: 600 13px var(--font-label);
     letter-spacing: 0.5px;
     color: #999;
-    background: rgba(255, 248, 225, 0.75);
+    background: rgba(252, 248, 238, 0.85);
     border: 1px solid rgba(51, 51, 51, 0.25);
     padding: 5px 11px;
-    border-radius: 999px;
+    border-radius: 0;
     pointer-events: none;
 }
 
@@ -249,12 +256,12 @@ strong {
 .actor {
     position: absolute;
     border: 2px solid var(--ink);
-    border-radius: 10px;
+    border-radius: 0;
     background: #fff;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-family: 'Fira Mono', monospace;
+    font-family: var(--font-label);
     font-weight: bold;
     font-size: 1.3rem;
     z-index: 5;
@@ -266,8 +273,9 @@ strong {
 .sender-node {
     left: 18%;
     width: 13%;
-    background: var(--c, var(--color-green));
-    color: var(--fg, #fff);
+    background: color-mix(in srgb, var(--c, var(--color-green)) 30%, #fff);
+    border-color: var(--c, var(--color-green));
+    color: var(--ink);
     transition: background-color 0.3s ease;
     /* a lone sender is a tall box; its label must not grow with it */
     font-size: clamp(13px, 2.4cqh, 19px);
@@ -278,8 +286,8 @@ strong {
 }
 
 .sender-node.blocked {
-    background: #9e9e9e;
-    --fg: #fff;
+    background: #e8e3d6;
+    color: var(--color-dimmed);
     border-style: dashed;
 }
 
@@ -300,11 +308,11 @@ strong {
     width: 3.2rem;
     min-width: 3.2rem;
     padding: 0.2rem 0.4rem;
-    font-family: var(--font-mono, "Fira Mono", monospace);
+    font-family: var(--font-label);
     font-size: 0.95rem;
     text-align: center;
     border: 1.5px solid rgba(51, 51, 51, 0.45);
-    border-radius: 5px;
+    border-radius: 0;
     background: #fff;
 }
 
@@ -325,22 +333,23 @@ strong {
 .actor.receiver {
     width: 4.6rem;
     height: 3.2rem;
-    background: #4a4a4a;
-    border-color: #cfcfcf;
+    background: color-mix(in srgb, var(--color-blue) 18%, #fff);
+    border-color: var(--color-blue);
+    color: var(--ink);
     flex-direction: column;
 }
 
 .actor.receiver .count {
     font-size: 1.5rem;
     line-height: 1;
-    color: #fff;
+    color: var(--ink);
 }
 
 .actor.receiver .count-caption {
     font-size: 0.5rem;
     font-weight: normal;
     letter-spacing: 0.05em;
-    color: #cfcfcf;
+    color: var(--color-dimmed);
 }
 
 .actor.receiver.waiting {
@@ -362,21 +371,21 @@ strong {
 /* buttons (live.css .btn) */
 
 .btn {
-    padding: 8px 14px;
-    font-size: 14px;
-    font-weight: 600;
-    font-family: sans-serif;
-    border: 2px solid #333;
-    border-radius: 8px;
-    background: #e8e8e8;
-    color: #333;
+    padding: 7px 13px;
+    font: 700 12px var(--font-label);
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    border: 2px solid var(--ink);
+    border-radius: 0;
+    background: #f2ecdc;
+    color: var(--ink);
     cursor: pointer;
     white-space: nowrap;
     user-select: none;
 }
 
 .btn:active {
-    background: #d8d8d8;
+    background: #e3dcc8;
 }
 
 .btn:disabled {
@@ -387,20 +396,18 @@ strong {
 }
 
 .btn.rcv {
-    border-color: #4a4a4a;
-    background: #cfcfcf;
+    border-color: var(--color-green);
+    background: color-mix(in srgb, var(--color-green) 24%, #fff);
 }
 
 .btn.clone {
-    border-color: #1b5e20;
-    background: var(--color-green);
-    color: #fff;
+    border-color: var(--color-green);
+    background: color-mix(in srgb, var(--color-green) 30%, #fff);
 }
 
 .btn.await {
-    border-color: #e8590c;
-    background: #f08c00;
-    color: #fff;
+    border-color: var(--color-highlight);
+    background: color-mix(in srgb, var(--color-highlight) 26%, #fff);
 }
 
 /* pill labels */
@@ -408,7 +415,7 @@ strong {
 .recv-label {
     padding: 4px 10px;
     border: 2px solid #333;
-    border-radius: 8px;
+    border-radius: 0;
     background: #fff;
     font: bold 20px sans-serif;
     color: #000;
@@ -419,7 +426,7 @@ strong {
 .note-pill {
     padding: 4px 10px;
     border: 2px dashed #999;
-    border-radius: 8px;
+    border-radius: 0;
     background: rgba(255, 248, 225, 0.9);
     font: bold 14px sans-serif;
     color: var(--color-dimmed);
@@ -470,9 +477,9 @@ strong {
     text-align: center;
     font-size: 14px;
     border: 2px solid #333;
-    border-radius: 6px;
+    border-radius: 0;
     padding: 0;
-    font-family: 'Fira Mono', monospace;
+    font-family: var(--font-label);
     background: #fff;
     color: #333;
 }
@@ -503,17 +510,19 @@ strong {
     width: 44px;
     height: 44px;
     border: 2px solid #333;
-    border-radius: 8px;
+    border-radius: 0;
     background: #fff;
     display: flex;
     align-items: center;
     justify-content: center;
-    font: bold 24px 'Fira Mono', monospace;
+    font: bold 24px var(--font-label);
     color: #000;
 }
 
 .slot.filled {
-    box-shadow: inset 0 0 0 2px var(--color-highlight);
+    background: color-mix(in srgb, var(--c, var(--color-highlight)) 22%, #fff);
+    border-color: var(--c, var(--ink));
+    color: var(--ink);
 }
 
 .recv-row {
@@ -529,7 +538,7 @@ strong {
     z-index: 15;
     left: 17.5%;
     top: var(--fy, 36%);
-    font: bold 1.4rem 'Fira Mono', monospace;
+    font: bold 1.4rem var(--font-label);
     pointer-events: none;
     text-shadow: 0 0 3px #fff;
     animation: fly-to-receiver 0.7s linear forwards;
@@ -555,13 +564,13 @@ strong {
     transform: translate(-50%, -50%);
     width: 6.5rem;
     height: 4.2rem;
-    border-radius: 10px;
+    border-radius: 0;
     border: 3px dashed var(--color-dimmed);
     background: #fff;
     display: flex;
     align-items: center;
     justify-content: center;
-    font: bold 0.85rem 'Fira Mono', monospace;
+    font: bold 0.85rem var(--font-label);
     color: var(--color-dimmed);
     transition:
         left 0.6s ease,
@@ -596,26 +605,29 @@ strong {
     transform: translate(-50%, -50%);
     width: 6.5rem;
     height: 4.2rem;
-    border-radius: 10px;
+    border-radius: 0;
     border: 3px solid var(--ink);
     display: flex;
     align-items: center;
     justify-content: center;
-    font: bold 0.85rem 'Fira Mono', monospace;
-    color: #fff;
+    font: bold 0.85rem var(--font-label);
+    color: var(--ink);
     animation: pop-in 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) both;
 }
 
 .result-pad.red {
-    background: var(--color-red);
+    background: color-mix(in srgb, var(--color-red) 30%, #fff);
+    border-color: var(--color-red);
 }
 
 .result-pad.green {
-    background: var(--color-green);
+    background: color-mix(in srgb, var(--color-green) 30%, #fff);
+    border-color: var(--color-green);
 }
 
 .result-pad.blue {
-    background: var(--color-blue);
+    background: color-mix(in srgb, var(--color-blue) 30%, #fff);
+    border-color: var(--color-blue);
 }
 
 @keyframes pop-in {
@@ -675,14 +687,14 @@ strong {
 .press-pad {
     width: 4.2rem;
     height: 3.1rem;
-    border-radius: 10px;
+    border-radius: 0;
     border: 2px solid var(--ink);
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
-    color: #fff;
-    font: bold 0.5rem 'Fira Mono', monospace;
+    color: var(--ink);
+    font: bold 0.5rem var(--font-label);
     text-transform: uppercase;
     letter-spacing: 0.05em;
 }
@@ -693,15 +705,18 @@ strong {
 }
 
 .press-pad.red {
-    background: var(--color-red);
+    background: color-mix(in srgb, var(--color-red) 32%, #fff);
+    border-color: var(--color-red);
 }
 
 .press-pad.green {
-    background: var(--color-green);
+    background: color-mix(in srgb, var(--color-green) 32%, #fff);
+    border-color: var(--color-green);
 }
 
 .press-pad.blue {
-    background: var(--color-blue);
+    background: color-mix(in srgb, var(--color-blue) 32%, #fff);
+    border-color: var(--color-blue);
 }
 
 /* inside a select branch a pad is one of three options, not the main
@@ -748,7 +763,8 @@ strong {
    explicit size it inherited the deck's projection-scaled body text and
    collided with the pills and tape stacked above it */
 .game-footer .dim {
-    font: italic 500 clamp(12px, 3.4cqh, 20px) / 1.35 'Bitter', serif;
+    font: 400 clamp(14px, 4cqh, 26px) / 1.3 var(--font-hand);
+    color: var(--color-dimmed);
 }
 
 /* ---- watch game: one fixed sender, a cell holding the value, receivers ---- */
@@ -757,12 +773,13 @@ strong {
 .tx-node {
     top: 50%;
     transform: translateY(-50%);
-    background: var(--color-highlight);
-    color: #fff;
+    background: color-mix(in srgb, var(--color-highlight) 28%, #fff);
+    border-color: var(--color-highlight);
+    color: var(--ink);
 }
 
 .tx-node.blocked {
-    background: #9e9e9e;
+    background: #e8e3d6;
     border-style: dashed;
     animation: tx-pulse 1.2s ease-in-out infinite;
 }
@@ -799,13 +816,13 @@ strong {
     justify-content: center;
     gap: 3px;
     padding: 0.3rem;
-    background: #4a4a4a;
-    border-color: #cfcfcf;
-    color: #fff;
+    background: color-mix(in srgb, var(--color-highlight) 16%, #fff);
+    border-color: var(--color-highlight);
+    color: var(--ink);
 }
 
 .cell-val {
-    font-family: var(--font-mono, "Fira Mono", monospace);
+    font-family: var(--font-label);
     font-size: clamp(15px, 5cqh, 26px);
     font-weight: bold;
     line-height: 1;
@@ -816,7 +833,7 @@ strong {
     font-size: 10px;
     font-weight: normal;
     letter-spacing: 0.04em;
-    color: #cfcfcf;
+    color: var(--color-dimmed);
 }
 
 /* receivers: a vertical list of self-contained cards, right-anchored. Each
@@ -853,8 +870,9 @@ strong {
     justify-content: start;
     gap: 0 0.6rem;
     padding: 0.25rem 0.55rem;
-    background: var(--c, #4a4a4a);
-    color: var(--fg, #fff);
+    background: color-mix(in srgb, var(--c, #b9b2a2) 30%, #fff);
+    border-color: var(--c, var(--ink));
+    color: var(--ink);
     border-color: var(--ink);
     overflow: hidden;
     transition:
@@ -872,7 +890,7 @@ strong {
 }
 
 .rx-tag {
-    font-family: var(--font-mono, "Fira Mono", monospace);
+    font-family: var(--font-label);
     font-size: 13px;
     font-weight: bold;
     letter-spacing: 0.03em;
@@ -880,7 +898,7 @@ strong {
 }
 
 .rx-seen {
-    font-family: var(--font-mono, "Fira Mono", monospace);
+    font-family: var(--font-label);
     font-size: 11px;
     opacity: 0.8;
     white-space: nowrap;
@@ -889,14 +907,14 @@ strong {
 .rx-face {
     grid-area: face;
     justify-self: center;
-    font-family: var(--font-mono, "Fira Mono", monospace);
+    font-family: var(--font-label);
     font-size: clamp(13px, 3.2cqh, 22px);
     font-weight: bold;
     line-height: 1;
 }
 
 .rx-state {
-    font-family: var(--font-mono, "Fira Mono", monospace);
+    font-family: var(--font-label);
     font-size: 11px;
     letter-spacing: 0.02em;
     opacity: 0.85;
@@ -908,7 +926,7 @@ strong {
 .rx-state.blocked {
     opacity: 1;
     font-weight: bold;
-    color: #ffe08a;
+    color: #8a5a00;
 }
 
 .rx-state.borrowing {
@@ -929,13 +947,13 @@ strong {
 .rx-card.awaiting {
     border-style: dashed;
     border-width: 2px;
-    box-shadow: 0 0 0 2px rgba(255, 224, 138, 0.5);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-highlight) 30%, #fff);
     animation: rx-pulse 1.6s ease-in-out infinite;
 }
 
 .rx-card.borrowing {
-    border-color: #e8590c;
-    box-shadow: 0 0 0 2px #e8590c;
+    border-color: var(--color-highlight);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-highlight) 45%, #fff);
 }
 
 @keyframes rx-pulse {
@@ -953,7 +971,7 @@ strong {
     font-size: 11px;
     padding: 4px 8px;
     border-width: 1px;
-    border-radius: 6px;
+    border-radius: 0;
 }
 
 /* flight: a value leaving the cell for one receiver, or a grey borrow */
@@ -962,7 +980,7 @@ strong {
     z-index: 15;
     left: 41%;
     top: 50%;
-    font: bold 1.4rem 'Fira Mono', monospace;
+    font: bold 1.4rem var(--font-label);
     pointer-events: none;
     text-shadow: 0 0 3px #fff;
     animation: fly-to-rx 0.7s ease-in forwards;
@@ -1035,7 +1053,7 @@ strong {
     padding: 3px 7px;
     font-size: 11px;
     border-width: 1.5px;
-    border-radius: 6px;
+    border-radius: 0;
 }
 
 .buf-slot {
@@ -1048,10 +1066,9 @@ strong {
 }
 
 .buf-slot.filled {
-    background: #fff;
+    background: color-mix(in srgb, var(--c) 22%, #fff);
     border-color: var(--c);
-    color: var(--c);
-    box-shadow: inset 0 0 0 2px var(--c);
+    color: var(--ink);
 }
 
 .buf-slot:not(.filled) {
@@ -1064,7 +1081,7 @@ strong {
 .buffer-newest,
 .buffer-tail {
     position: absolute;
-    font: 600 11px 'Fira Mono', monospace;
+    font: 600 11px var(--font-label);
     color: var(--color-dimmed);
     letter-spacing: 0.05em;
     text-transform: uppercase;
@@ -1094,15 +1111,16 @@ strong {
     width: 13%;
     min-height: 4.6rem;
     border: 2px solid var(--ink);
-    border-radius: 10px;
-    background: #4a4a4a;
+    border-radius: 0;
+    background: #f1ecdf;
+    color: var(--ink);
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
     gap: 2px;
     padding: 4px;
-    font-family: 'Fira Mono', monospace;
+    font-family: var(--font-label);
     z-index: 5;
 }
 
@@ -1113,12 +1131,12 @@ strong {
 }
 
 .rx-b-node .rx-last {
-    font: bold 1.2rem 'Fira Mono', monospace;
+    font: bold 1.2rem var(--font-label);
     color: #fff;
 }
 
 .rx-b-node .rx-next {
-    font: 600 9px 'Fira Mono', monospace;
+    font: 600 9px var(--font-label);
     color: #cfcfcf;
 }
 
@@ -1135,7 +1153,7 @@ strong {
     font: bold 10px sans-serif;
     background: var(--color-red);
     color: #fff;
-    border-radius: 999px;
+    border-radius: 0;
     padding: 1px 7px;
     margin-top: 2px;
 }
@@ -1171,7 +1189,7 @@ strong {
     z-index: 15;
     left: var(--from-x);
     top: var(--from-y);
-    font: bold 1.4rem 'Fira Mono', monospace;
+    font: bold 1.4rem var(--font-label);
     pointer-events: none;
     text-shadow: 0 0 3px #fff;
     animation: bcast-fly 0.7s ease-in forwards;
@@ -1209,9 +1227,8 @@ strong {
 }
 
 .btn.send {
-    border-color: #1b5e20;
-    background: var(--color-green);
-    color: #fff;
+    border-color: var(--color-green);
+    background: color-mix(in srgb, var(--color-green) 30%, #fff);
 }
 
 /* ---- identity: seat badge and the join code ---- */
@@ -1230,8 +1247,8 @@ strong {
     left: 16px;
     z-index: 31;
     padding: 4px 12px;
-    border-radius: 999px;
-    font-family: "Fira Mono", monospace;
+    border-radius: 0;
+    font-family: var(--font-label);
     font-size: 15px;
     letter-spacing: 0.02em;
     background: var(--color-background);
@@ -1266,7 +1283,7 @@ strong {
     justify-items: center;
     gap: 18px;
     padding: 32px;
-    border-radius: 12px;
+    border-radius: 0;
     background: var(--color-background);
 }
 
@@ -1286,7 +1303,7 @@ strong {
 
 .join-url {
     margin: 0;
-    font-family: "Fira Mono", monospace;
+    font-family: var(--font-label);
     font-size: 24px;
     color: var(--color-foreground);
     overflow-wrap: anywhere;
@@ -1355,11 +1372,11 @@ strong {
 }
 
 .dial-label {
-    font: bold 18px 'Fira Mono', monospace;
+    font: bold 18px var(--font-label);
     fill: var(--color-dimmed);
     /* cream halo: the sweeping hand passes near the number twice a minute */
     paint-order: stroke;
-    stroke: rgba(255, 248, 225, 0.9);
+    stroke: rgba(250, 245, 232, 0.9);
     stroke-width: 5;
     stroke-linejoin: round;
 }
@@ -1419,8 +1436,8 @@ strong {
     min-width: 190px;
     padding: 0.9rem 1.1rem;
     border: 2px dashed rgba(51, 51, 51, 0.35);
-    border-radius: 10px;
-    background: rgba(255, 248, 225, 0.75);
+    border-radius: 0;
+    background: rgba(252, 248, 238, 0.85);
     text-align: center;
     transition: border-color 0.2s ease, opacity 0.2s ease;
     opacity: 0.55;
@@ -1443,7 +1460,7 @@ strong {
 }
 
 .branch-head {
-    font: 600 13px 'Fira Mono', monospace;
+    font: 600 13px var(--font-label);
     color: var(--color-dimmed);
     margin-bottom: 0.6rem;
     white-space: nowrap;
@@ -1458,13 +1475,13 @@ strong {
 }
 
 .race-vs {
-    font: bold 15px 'Fira Mono', monospace;
+    font: bold 15px var(--font-label);
     color: var(--color-highlight);
     white-space: nowrap;
 }
 
 .countdown {
-    font: bold 26px 'Fira Mono', monospace;
+    font: bold 26px var(--font-label);
     color: var(--color-highlight);
 }
 
@@ -1505,6 +1522,7 @@ strong {
 }
 
 .tape.empty {
+    font: 400 clamp(16px, 5cqh, 30px) var(--font-hand);
     color: var(--color-dimmed);
 }
 
@@ -1512,8 +1530,8 @@ strong {
     min-width: 52px;
     padding: 4px 8px;
     border: 2px solid var(--ink);
-    border-radius: 6px;
-    font: bold 13px 'Fira Mono', monospace;
+    border-radius: 0;
+    font: bold 13px var(--font-label);
     text-align: center;
     background: rgba(255, 248, 225, 0.9);
 }
@@ -1541,10 +1559,10 @@ strong {
 .round-badge {
     margin-left: 8px;
     padding: 1px 7px;
-    border-radius: 999px;
+    border-radius: 0;
     background: var(--color-highlight);
     color: #fff;
-    font: 600 11px 'Fira Mono', monospace;
+    font: 600 11px var(--font-label);
 }
 
 /* Phones get the race stacked: two 190px branches plus the gap overflow a
