@@ -353,8 +353,8 @@ strong {
 }
 
 .actor.receiver.waiting {
-    background: #9e9e9e;
-    border-color: #777;
+    background: #e8e3d6;
+    border-color: var(--color-dimmed);
     animation: receiver-pulse 1.2s ease-in-out infinite;
 }
 
@@ -417,8 +417,8 @@ strong {
     border: 2px solid #333;
     border-radius: 0;
     background: #fff;
-    font: bold 20px sans-serif;
-    color: #000;
+    font: bold 20px var(--font-label);
+    color: var(--ink);
     white-space: nowrap;
     z-index: 10;
 }
@@ -434,8 +434,8 @@ strong {
 }
 
 .note-pill.waiting {
-    color: #e8590c;
-    border-color: #e8590c;
+    color: var(--color-highlight);
+    border-color: var(--color-highlight);
 }
 
 .note-pill.blocked {
@@ -584,9 +584,9 @@ strong {
     left: 33%;
     transform: translate(-50%, -50%) scale(0.55);
     border-style: solid;
-    border-color: #9e9e9e;
-    background: #9e9e9e;
-    color: #fff;
+    border-color: var(--color-dimmed);
+    background: #e8e3d6;
+    color: var(--ink);
 }
 
 .future-pad.pending {
@@ -1126,22 +1126,22 @@ strong {
 
 .rx-b-node .rx-name {
     font-weight: bold;
-    color: #fff;
+    color: var(--ink);
     font-size: 0.8rem;
 }
 
 .rx-b-node .rx-last {
     font: bold 1.2rem var(--font-label);
-    color: #fff;
+    color: var(--ink);
 }
 
 .rx-b-node .rx-next {
     font: 600 9px var(--font-label);
-    color: #cfcfcf;
+    color: var(--color-dimmed);
 }
 
 .rx-b-node.waiting {
-    background: #9e9e9e;
+    background: #e8e3d6;
     animation: receiver-pulse 1.2s ease-in-out infinite;
 }
 
@@ -1150,9 +1150,10 @@ strong {
 }
 
 .lag-badge {
-    font: bold 10px sans-serif;
-    background: var(--color-red);
-    color: #fff;
+    font: bold 10px var(--font-label);
+    background: color-mix(in srgb, var(--color-red) 24%, #fff);
+    color: var(--color-red);
+    border: 1.5px solid var(--color-red);
     border-radius: 0;
     padding: 1px 7px;
     margin-top: 2px;
@@ -1560,8 +1561,8 @@ strong {
     margin-left: 8px;
     padding: 1px 7px;
     border-radius: 0;
-    background: var(--color-highlight);
-    color: #fff;
+    background: color-mix(in srgb, var(--color-highlight) 22%, #fff);
+    color: var(--ink);
     font: 600 11px var(--font-label);
 }
 
