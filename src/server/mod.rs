@@ -1,7 +1,11 @@
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::State;
 use axum::response::Response;
-use tokio::sync::{mpsc as tokio_mpsc, watch as tokio_watch};
+use serde::de::DeserializeOwned;
+use serde::Serialize;
+use tokio::sync::{
+    broadcast as tokio_broadcast, mpsc as tokio_mpsc, oneshot, watch as tokio_watch,
+};
 
 use crate::protocol::{AppDown, AppUp, Game, KEEPALIVE, SLIDE_COUNT};
 use crate::server::auth::{Connecting, Joining};
@@ -391,6 +395,93 @@ pub(crate) async fn send_json(
 ) -> Result<(), axum::Error> {
     let json = serde_json::to_string(value).expect("serialize message");
     socket.send(Message::text(json)).await
+}
+
+/// Ask an actor for its current state, the way every game socket does on
+/// connect and after falling behind. `None` means the actor is gone.
+pub(crate) async fn ask<M, E>(
+    cmd_tx: &tokio_mpsc::Sender<M>,
+    get: impl FnOnce(oneshot::Sender<E>) -> M,
+) -> Option<E> {
+    let (reply_tx, reply_rx) = oneshot::channel();
+    cmd_tx.send(get(reply_tx)).await.ok()?;
+    reply_rx.await.ok()
+}
+
+/// Relay one game socket until it ends: wires in, events out.
+///
+/// The keepalive is skipped, undecodable text ignored, spectators' wires
+/// dropped, a silent peer timed out, and a client that fell behind the
+/// event plane is sent a fresh snapshot rather than dropped. Returns when
+/// the peer goes, or when the actor does — in which case the socket has
+/// already been told to retry. Whatever the connection held is the
+/// caller's to clean up.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn relay<W, E, M>(
+    socket: &mut WebSocket,
+    identity: &auth::Identity,
+    conn: u64,
+    game: &'static str,
+    cmd_tx: &tokio_mpsc::Sender<M>,
+    evt_rx: &mut tokio_broadcast::Receiver<E>,
+    wire: impl Fn(W) -> M,
+    get: impl Fn(oneshot::Sender<E>) -> M,
+) where
+    W: DeserializeOwned,
+    E: Serialize + Clone,
+{
+    loop {
+        tokio::select! {
+            msg = tokio::time::timeout(DEAD_PEER_TIMEOUT, socket.recv()) => match msg {
+                Ok(Some(Ok(Message::Text(text)))) => {
+                    if text.as_str() == KEEPALIVE {
+                        continue;
+                    }
+                    let Ok(decoded) = serde_json::from_str::<W>(text.as_str()) else {
+                        tracing::debug!(game, "ignoring undecodable wire");
+                        continue;
+                    };
+                    // Spectators watch. The client hides their controls
+                    // too, but hiding a button is not a check.
+                    if !identity.may_play() {
+                        continue;
+                    }
+                    if cmd_tx.send(wire(decoded)).await.is_err() {
+                        close_restarting(socket).await;
+                        return;
+                    }
+                }
+                Ok(Some(Ok(_))) | Ok(None) | Ok(Some(Err(_))) => return,
+                // a phone that went into a tunnel, or a lid that closed
+                Err(_) => {
+                    tracing::debug!(conn, game, "peer went silent");
+                    return;
+                }
+            },
+            event = evt_rx.recv() => match event {
+                Ok(event) => {
+                    if send_json(socket, &event).await.is_err() {
+                        return;
+                    }
+                }
+                Err(tokio_broadcast::error::RecvError::Closed) => {
+                    close_restarting(socket).await;
+                    return;
+                }
+                // A lagged client missed events; a snapshot makes it whole,
+                // so ask for one rather than dropping the socket.
+                Err(tokio_broadcast::error::RecvError::Lagged(missed)) => {
+                    tracing::debug!(conn, game, missed, "client lagged; resyncing");
+                    let Some(snapshot) = ask(cmd_tx, &get).await else {
+                        return;
+                    };
+                    if send_json(socket, &snapshot).await.is_err() {
+                        return;
+                    }
+                }
+            },
+        }
+    }
 }
 
 /// Make sure a presenter key exists, and print the URL that uses it.

@@ -22,30 +22,11 @@ fn theme() -> &'static Theme {
     })
 }
 
-/// Highlight `code` as `token` (e.g. "rust") into HTML with inline styles.
-/// Deterministic across targets, so SSR and the hydrated client agree.
-pub fn highlight(code: &str, token: &str) -> String {
-    let Some(syntax) = syntax_set().find_syntax_by_token(token) else {
-        return html_escape(code);
-    };
-    let mut highlighter = HighlightLines::new(syntax, theme());
-    let mut html = String::new();
-    for line in LinesWithEndings::from(code) {
-        let Ok(regions) = highlighter.highlight_line(line, syntax_set()) else {
-            html.push_str(&html_escape(line));
-            continue;
-        };
-        for (style, text) in regions {
-            push_region(&mut html, style, text);
-        }
-    }
-    html
-}
-
-/// Highlight `code` into one HTML fragment per source line, newlines
-/// dropped, for views that style each line on its own. Highlighter state
-/// still carries across lines, so a string or comment spanning several
-/// stays coloured.
+/// Highlight `code` as `token` (e.g. "rust") into one HTML fragment per
+/// source line, newlines dropped, with inline styles. Highlighter state
+/// carries across lines, so a string or comment spanning several stays
+/// coloured; deterministic across targets, so SSR and the hydrated client
+/// agree.
 pub fn highlight_lines(code: &str, token: &str) -> Vec<String> {
     let Some(syntax) = syntax_set().find_syntax_by_token(token) else {
         return code.lines().map(html_escape).collect();

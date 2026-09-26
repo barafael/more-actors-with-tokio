@@ -9,13 +9,13 @@ mod state;
 use dioxus::prelude::*;
 
 use crate::clock::Ticking;
-use crate::games::{use_game_connection, waited_s, GameConnection};
+use crate::games::{use_game_connection, GameConnection, Waited};
 use crate::protocol::{MpscEvent, MpscSnapshot, MpscWire, SenderInfo, MPSC_CAPACITY};
 use crate::sim::{now_ms, MpscSim, LOCAL_CONN};
 use crate::{AppCtx, GameMode};
 
 use crate::games::palette;
-use crate::games::ticker::{subscribe, use_clock};
+use crate::games::ticker::use_clock;
 use layout::{ARROW_X0, ARROW_X1, RECEIVER_CY};
 use state::{ChannelState, Flight};
 
@@ -171,7 +171,20 @@ pub fn MpscGame() -> Element {
         }
     });
 
-    let senders = use_memo(move || chan.snap.read().senders.clone());
+    // The arrows and flights only care who the senders are and whether they
+    // are blocked. A parked send's duration changes with every snapshot, so
+    // leave it out, or each snapshot would redraw every arrow.
+    let senders = use_memo(move || {
+        chan.snap
+            .read()
+            .senders
+            .iter()
+            .map(|s| SenderInfo {
+                blocked_for_ms: None,
+                ..*s
+            })
+            .collect::<Vec<_>>()
+    });
     let flights = use_memo(move || chan.flights.read().clone());
     let nodes = use_memo(move || {
         let snap = chan.snap.read();
@@ -225,15 +238,9 @@ pub fn MpscGame() -> Element {
             .collect::<Vec<ControlsView>>()
     });
 
-    // While a send is parked on the full queue its node counts the wait.
-    // Subscribing to the frame clock re-renders the game every frame for
-    // exactly as long as someone is blocked; the moment the queue frees,
-    // the subscription lapses and the game goes quiet again.
+    // While a send is parked on the full queue its node counts the wait;
+    // the badge reads the frame clock itself, so only it redraws.
     let clock = use_clock();
-    let any_blocked = use_memo(move || chan.snap.read().senders.iter().any(|s| s.blocked));
-    if any_blocked() {
-        subscribe(clock);
-    }
 
     let blocked_count = use_memo(move || {
         chan.snap
@@ -252,11 +259,7 @@ pub fn MpscGame() -> Element {
             ArrowLayer { senders: senders() }
 
             for node in nodes() {
-                SenderNode {
-                    key: "{node.sender.conn}",
-                    waited: node.for_ms.map(|ms| waited_s(ms, (chan.received_at)())),
-                    node: node,
-                }
+                SenderNode { key: "{node.sender.conn}", node, at: (chan.received_at)(), clock }
             }
 
             FlightLayer { flights: flights(), senders: senders() }
@@ -321,11 +324,8 @@ struct NodeView {
     height: f64,
 }
 
-/// `waited` is the whole seconds this send has been parked, worked out by
-/// the caller: the clock re-renders the game, but a component whose props
-/// did not change is skipped, so a count made in here would freeze.
 #[component]
-fn SenderNode(node: NodeView, waited: Option<u64>) -> Element {
+fn SenderNode(node: NodeView, at: f64, clock: Signal<f64>) -> Element {
     let s = node.sender;
     let title = if s.owner == s.conn {
         "connected player"
@@ -338,8 +338,8 @@ fn SenderNode(node: NodeView, waited: Option<u64>) -> Element {
             style: "top: {node.top}%; height: {node.height}%; --c: {palette::sender_hex(s.conn)}; --fg: {palette::sender_text_color(s.conn)};",
             title: title,
             "{node.label}"
-            if let Some(waited) = waited {
-                span { class: "blocked-clock", "{waited}s" }
+            if let Some(for_ms) = node.for_ms {
+                Waited { for_ms, at, clock }
             }
         }
     }

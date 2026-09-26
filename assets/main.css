@@ -108,17 +108,6 @@ strong {
     color: var(--color-dimmed);
 }
 
-.code {
-    font-family: 'Fira Mono', monospace;
-    font-size: 0.62rem;
-    line-height: 1.35;
-    background: #fff;
-    border-radius: 0;
-    padding: 0.9rem 1.2rem;
-    border: 1px solid #e8dfc0;
-    margin: 1em 0 0;
-}
-
 /* ---- chrome (presenter nav) ---- */
 
 /* Holds the bar at the bottom without taking the slide's clicks. Game
@@ -205,6 +194,13 @@ strong {
 /* ---- minigame primitives (from lib/live.css) ---- */
 
 .diagram {
+    /* Sizes for text inside a game. Custom properties are substituted where
+       they are used, so the cqh resolves against this diagram, the size
+       container, rather than against anything above it. */
+    --t-label: clamp(10px, 2.2cqh, 14px);
+    --t-body: clamp(11px, 2.4cqh, 15px);
+    --t-state: clamp(13px, 3.2cqh, 21px);
+    --t-big: clamp(18px, 5cqh, 32px);
     position: relative;
     margin-top: 0.6rem;
     border: 2px solid rgba(51, 51, 51, 0.25);
@@ -316,19 +312,6 @@ strong {
 }
 
 /* every in-diagram text field: wide enough to see the char you typed */
-.diagram input[type="text"],
-.diagram input:not([type]) {
-    width: 3.2rem;
-    min-width: 3.2rem;
-    padding: 0.2rem 0.4rem;
-    font-family: var(--font-label);
-    font-size: 0.95rem;
-    text-align: center;
-    border: 1.5px solid rgba(51, 51, 51, 0.45);
-    border-radius: 0;
-    background: #fff;
-}
-
 .diagram input:focus-visible {
     outline: 2px solid var(--color-orange, #eb5b20);
     outline-offset: 1px;
@@ -476,21 +459,11 @@ strong {
 }
 
 /* The one-character draft fields: fixed-size to sit next to the
-   fixed-size .btn controls. Scoped under .diagram on purpose — three
-   classes outrank the generic `.diagram input` rule above, which is
-   rem-scaled (and therefore grows past this fixed 26px height on a
-   sizeable screen, spilling the typed character out of the box). */
-.diagram .side-btns .field,
-.diagram .sender-ctl .field,
-.diagram .tx-ctl .field,
-.diagram .create-row .field,
-.diagram .sender-btns .field,
-.diagram .os-actions .field {
-    /* the general input rule's minimum is 3.2rem, which the deck's root
-       font scales to 128px on a projector: without this it wins over the
-       width, and every one-character field becomes a text box. Not
-       shrinkable either, or a crowded flex row squeezes it below that. */
-    min-width: 0;
+   fixed-size .btn controls. Every input in a diagram is one of these, so
+   there is no general input rule for them to fight. */
+.diagram .field {
+    /* one character, whatever row it sits in: a crowded flex row would
+       otherwise squeeze it */
     flex: none;
     width: 26px;
     height: 26px;
@@ -1607,7 +1580,7 @@ strong {
     }
 }
 
-/* ---- the actor recipe: the article's code beside its rules ---- */
+/* ---- the actor recipe: the rules, in words ---- */
 
 /* the rules alone, for now: code comes back with the snippet tooling */
 .recipe {
@@ -1737,7 +1710,7 @@ strong {
     min-height: 2.1em;
     padding: 5px 8px;
     border-top: 1px solid #e8dfc0;
-    font: clamp(9px, 2cqh, 15px) var(--font-label);
+    font: var(--t-body) var(--font-label);
 }
 
 .ut-locals-head {
@@ -1754,9 +1727,9 @@ strong {
 }
 
 /* one hue per oneshot pair, shared by its callback and its resp */
-.c0 { --c: var(--color-red); }
-.c1 { --c: var(--color-green); }
-.c2 { --c: var(--color-blue); }
+.ut-pair-0 { --c: var(--color-red); }
+.ut-pair-1 { --c: var(--color-green); }
+.ut-pair-2 { --c: var(--color-blue); }
 
 .ut-world {
     flex: 1;
@@ -1884,9 +1857,9 @@ strong {
     color: var(--color-dimmed);
 }
 
-.ut-row.c0 .ut-name,
-.ut-row.c1 .ut-name,
-.ut-row.c2 .ut-name {
+.ut-row.ut-pair-0 .ut-name,
+.ut-row.ut-pair-1 .ut-name,
+.ut-row.ut-pair-2 .ut-name {
     color: var(--c);
 }
 
@@ -1974,13 +1947,13 @@ strong {
 }
 
 .mx-caption {
-    font: 600 clamp(10px, 2.2cqh, 14px) var(--font-label);
+    font: 600 var(--t-label) var(--font-label);
     color: var(--color-dimmed);
     letter-spacing: 0.04em;
 }
 
 .mx-empty {
-    font: 400 clamp(14px, 3.4cqh, 22px) var(--font-hand);
+    font: 400 var(--t-state) var(--font-hand);
     color: var(--color-dimmed);
 }
 
@@ -1998,7 +1971,7 @@ strong {
     padding: 3px 9px;
     border: 2px solid var(--c, var(--ink));
     background: color-mix(in srgb, var(--c, var(--ink)) 18%, #fff);
-    font: 700 clamp(11px, 2.4cqh, 15px) var(--font-label);
+    font: 700 var(--t-body) var(--font-label);
     color: var(--ink);
     white-space: nowrap;
 }
@@ -2053,7 +2026,7 @@ strong {
 }
 
 .mx-lock-head {
-    font: 700 clamp(10px, 2.2cqh, 14px) var(--font-label);
+    font: 700 var(--t-label) var(--font-label);
     text-transform: uppercase;
     letter-spacing: 0.08em;
     color: var(--color-dimmed);
@@ -2140,8 +2113,9 @@ strong {
     position: relative;
 }
 
-.cr-slots {
-    font: 700 clamp(10px, 2.2cqh, 14px) var(--font-label);
+.cr-slots,
+.cr-msg {
+    font: 700 var(--t-label) var(--font-label);
 }
 
 .cr-slot {
@@ -2149,22 +2123,19 @@ strong {
     min-height: 2em;
 }
 
-.cr-msg {
-    font: 700 clamp(10px, 2.2cqh, 14px) var(--font-label);
-}
-
 .cr-msg.deaf {
     opacity: 0.45;
     text-decoration: line-through;
 }
 
-.cr-arrow {
-    font: 700 clamp(18px, 5cqh, 34px) var(--font-label);
+/* the arrow between two stages of a flow, in the call and cycle games */
+.flow-arrow {
+    font: 700 var(--t-big) var(--font-label);
     color: var(--color-dimmed);
 }
 
 .cr-state {
-    font: 700 clamp(13px, 3cqh, 20px) var(--font-label);
+    font: 700 var(--t-state) var(--font-label);
 }
 
 .cr-hand {
@@ -2185,7 +2156,7 @@ strong {
 .cr-outcome {
     white-space: normal;
     text-align: center;
-    font-size: clamp(11px, 2.3cqh, 14px);
+    font-size: var(--t-label);
 }
 
 /* ---- oneshot ---- */
@@ -2228,15 +2199,15 @@ strong {
 }
 
 .os-handle-name {
-    font: 700 clamp(18px, 5cqh, 30px) var(--font-label);
+    font: 700 var(--t-big) var(--font-label);
 }
 
 .os-handle-kind {
-    font-size: clamp(10px, 2.2cqh, 13px);
+    font-size: var(--t-label);
 }
 
 .os-handle-state {
-    font: 400 clamp(14px, 3.2cqh, 20px) var(--font-hand);
+    font: 400 var(--t-state) var(--font-hand);
 }
 
 .os-actions {
@@ -2270,7 +2241,7 @@ strong {
 }
 
 .os-slot-value {
-    font: 700 clamp(18px, 5cqh, 30px) var(--font-label);
+    font: 700 var(--t-big) var(--font-label);
 }
 
 .os-log {
@@ -2279,7 +2250,7 @@ strong {
     align-items: center;
     gap: 2px;
     min-height: 84px;
-    font: clamp(11px, 2.4cqh, 15px) 'Fira Mono', monospace;
+    font: var(--t-body) 'Fira Mono', monospace;
 }
 
 .os-line {
@@ -2324,7 +2295,7 @@ strong {
     justify-content: center;
     flex-wrap: wrap;
     gap: 10px;
-    font: 700 clamp(10px, 2.3cqh, 14px) var(--font-label);
+    font: 700 var(--t-label) var(--font-label);
 }
 
 .cy-outside {
@@ -2345,11 +2316,6 @@ strong {
     justify-content: center;
 }
 
-.cy-arrow {
-    font-size: clamp(18px, 5cqh, 34px);
-    color: var(--color-dimmed);
-}
-
 /* the way back: a bracket under the row, from B round to A's inbox */
 .cy-return {
     width: 62%;
@@ -2358,7 +2324,7 @@ strong {
     border-top: none;
     text-align: center;
     padding-top: 8px;
-    font: 400 clamp(13px, 3cqh, 20px) var(--font-hand);
+    font: 400 var(--t-state) var(--font-hand);
     color: var(--color-dimmed);
 }
 

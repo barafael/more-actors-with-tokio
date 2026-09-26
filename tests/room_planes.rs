@@ -13,13 +13,15 @@ use common::{
     take_ticket, Socket,
 };
 use more_actors_with_tokio::protocol::{
-    CallEvent, CallPhase, CallWire, MutexEvent, MutexSnapshot, MutexWire,
+    CallEvent, CallPhase, CallSnapshot, CallWire, MutexEvent, MutexSnapshot, MutexWire, RoomEvent,
 };
+use serde::de::DeserializeOwned;
 
-async fn mutex_hello(socket: &mut Socket) -> u64 {
-    next_event(socket, |event: MutexEvent| match event {
-        MutexEvent::Hello { conn } => Some(conn),
-        MutexEvent::Snapshot { .. } => None,
+/// The connection id a room game's socket announces first.
+async fn hello<S: DeserializeOwned>(socket: &mut Socket) -> u64 {
+    next_event(socket, |event: RoomEvent<S>| match event {
+        RoomEvent::Hello { conn } => Some(conn),
+        RoomEvent::Snapshot { .. } => None,
     })
     .await
 }
@@ -35,14 +37,6 @@ async fn mutex_until(
     .await
 }
 
-async fn call_hello(socket: &mut Socket) -> u64 {
-    next_event(socket, |event: CallEvent| match event {
-        CallEvent::Hello { conn } => Some(conn),
-        CallEvent::Snapshot { .. } => None,
-    })
-    .await
-}
-
 /// The hook's whole premise, over the wire: first come holds, the next one
 /// parks, and a holder who walks away drops the guard.
 #[tokio::test]
@@ -53,9 +47,9 @@ async fn a_departing_holder_hands_the_mutex_to_the_next_in_line() {
     let (_seat_a, ticket_a) = take_ticket(&base).await;
     let (_seat_b, ticket_b) = take_ticket(&base).await;
     let mut a = connect_as_player(&base, "/ws/game/mutex", &ticket_a).await;
-    let a_conn = mutex_hello(&mut a).await;
+    let a_conn = hello::<MutexSnapshot>(&mut a).await;
     let mut b = connect_as_player(&base, "/ws/game/mutex", &ticket_b).await;
-    let b_conn = mutex_hello(&mut b).await;
+    let b_conn = hello::<MutexSnapshot>(&mut b).await;
 
     send(&mut a, &MutexWire::Lock).await;
     mutex_until(&mut b, |s| s.holder.map(|h| h.task) == Some(a_conn)).await;
@@ -81,12 +75,12 @@ async fn a_spectator_watches_the_mutex_without_a_task() {
     let base = serve().await;
 
     let mut spectator = connect(&base, "/ws/game/mutex").await;
-    mutex_hello(&mut spectator).await;
+    hello::<MutexSnapshot>(&mut spectator).await;
     send(&mut spectator, &MutexWire::Lock).await;
 
     let (_seat, ticket) = take_ticket(&base).await;
     let mut player = connect_as_player(&base, "/ws/game/mutex", &ticket).await;
-    let player_conn = mutex_hello(&mut player).await;
+    let player_conn = hello::<MutexSnapshot>(&mut player).await;
     let snap = mutex_until(&mut spectator, |s| !s.idle.is_empty()).await;
     assert_eq!(snap.holder, None, "the spectator's lock went nowhere");
     assert_eq!(snap.idle.len(), 1);
@@ -101,9 +95,9 @@ async fn only_the_presenter_runs_the_actor_loop() {
 
     let (_seat, ticket) = take_ticket(&base).await;
     let mut player = connect_as_player(&base, "/ws/game/call", &ticket).await;
-    let me = call_hello(&mut player).await;
+    let me = hello::<CallSnapshot>(&mut player).await;
     let mut presenter = connect_as_presenter(&base, "/ws/game/call").await;
-    call_hello(&mut presenter).await;
+    hello::<CallSnapshot>(&mut presenter).await;
 
     send(&mut player, &CallWire::Request).await;
     // a player playing the actor is refused
@@ -144,9 +138,9 @@ async fn answering_a_departed_requester_fails() {
 
     let (_seat, ticket) = take_ticket(&base).await;
     let mut player = connect_as_player(&base, "/ws/game/call", &ticket).await;
-    call_hello(&mut player).await;
+    hello::<CallSnapshot>(&mut player).await;
     let mut presenter = connect_as_presenter(&base, "/ws/game/call").await;
-    call_hello(&mut presenter).await;
+    hello::<CallSnapshot>(&mut presenter).await;
 
     send(&mut player, &CallWire::Request).await;
     next_event(&mut presenter, |event: CallEvent| match event {

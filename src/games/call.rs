@@ -10,8 +10,10 @@
 
 use dioxus::prelude::*;
 
-use crate::games::ticker::{subscribe, use_clock};
-use crate::games::{palette, use_game_connection, waited_s, GameConnection};
+use crate::games::ticker::use_clock;
+use crate::games::{
+    palette, use_game_connection, use_timed, GameConnection, TaskChip, Timed, Viewer, Waited,
+};
 use crate::protocol::{
     CallEvent, CallOutcome, CallPhase, CallRequest, CallSnapshot, CallTask, CallWire, Game,
 };
@@ -30,21 +32,14 @@ fn local_sim() -> CallSim {
     sim
 }
 
-#[derive(Clone, Copy)]
-struct View {
-    snap: Signal<CallSnapshot>,
-    received_at: Signal<f64>,
-}
-
-impl View {
-    fn set(mut self, snap: CallSnapshot) {
-        self.snap.set(snap);
-        self.received_at.set(now_ms());
-    }
-}
-
 /// `task` only matters locally: remotely the server knows who sent it.
-fn dispatch(conn: GameConnection, mut sim: Signal<CallSim>, view: View, task: u64, wire: CallWire) {
+fn dispatch(
+    conn: GameConnection,
+    mut sim: Signal<CallSim>,
+    view: Timed<CallSnapshot>,
+    task: u64,
+    wire: CallWire,
+) {
     if conn.is_local() {
         sim.with_mut(|sim| {
             sim.sync_now(now_ms());
@@ -56,7 +51,7 @@ fn dispatch(conn: GameConnection, mut sim: Signal<CallSim>, view: View, task: u6
     }
 }
 
-fn restart(conn: GameConnection, ctx: AppCtx, mut sim: Signal<CallSim>, view: View) {
+fn restart(conn: GameConnection, ctx: AppCtx, mut sim: Signal<CallSim>, view: Timed<CallSnapshot>) {
     if conn.is_local() {
         sim.set(local_sim());
         view.set(sim.read().snapshot());
@@ -66,26 +61,15 @@ fn restart(conn: GameConnection, ctx: AppCtx, mut sim: Signal<CallSim>, view: Vi
     }
 }
 
-fn task_name(task: u64, owner: u64, me: Option<u64>, local: bool) -> String {
-    if !local && Some(owner) == me {
-        "you".to_string()
-    } else {
-        format!("task {task}")
-    }
-}
-
 #[component]
 pub fn CallGame() -> Element {
     let ctx: AppCtx = use_context();
     let mode = use_context::<GameMode>();
     let sim = use_signal(local_sim);
-    let view = View {
-        snap: use_signal(move || match mode {
-            GameMode::Local => sim.peek().snapshot(),
-            GameMode::Remote => CallSnapshot::default(),
-        }),
-        received_at: use_signal(now_ms),
-    };
+    let view = use_timed(move || match mode {
+        GameMode::Local => sim.peek().snapshot(),
+        GameMode::Remote => CallSnapshot::default(),
+    });
     let mut my_conn = use_signal(move || (mode == GameMode::Local).then_some(LOCAL_CONN));
 
     let conn = use_game_connection::<CallEvent>("/ws/game/call", move |event| match event {
@@ -93,30 +77,31 @@ pub fn CallGame() -> Element {
         CallEvent::Snapshot { state } => view.set(state),
     });
 
+    // Read by the count-up badges alone, so only they redraw each frame.
     let clock = use_clock();
     let snap = view.snap.read().clone();
-    let waiting = |t: &CallTask| matches!(t.phase, CallPhase::Sending | CallPhase::Awaiting);
-    if snap.tasks.iter().any(waiting) {
-        subscribe(clock);
-    }
     let at = (view.received_at)();
-    let local = conn.is_local();
-    let me = my_conn();
+    let viewer = Viewer {
+        me: my_conn(),
+        local: conn.is_local(),
+    };
     let host = ctx.may_present();
-    let owner_of = |task: u64| {
-        snap.tasks
+    // A departed requester's message outlives it, so fall back to the task.
+    let name_of = |task: u64| {
+        let owner = snap
+            .tasks
             .iter()
             .find(|t| t.task == task)
-            .map(|t| t.owner)
-            .unwrap_or(task)
+            .map_or(task, |t| t.owner);
+        viewer.name(task, owner)
     };
     let mine: Vec<CallTask> = snap
         .tasks
         .iter()
-        .filter(|t| Some(t.owner) == me)
+        .filter(|t| viewer.owns(t.owner))
         .copied()
         .collect();
-    let waiting_count = snap.tasks.iter().filter(|t| waiting(t)).count();
+    let waiting_count = snap.tasks.iter().filter(|t| waiting(t.phase)).count();
 
     rsx! {
         div { class: "diagram call-game",
@@ -130,13 +115,7 @@ pub fn CallGame() -> Element {
                         span { class: "mx-empty", "scan the code to become a requester" }
                     }
                     for task in snap.tasks.iter() {
-                        Requester {
-                            key: "{task.task}",
-                            task: *task,
-                            name: task_name(task.task, task.owner, me, local),
-                            mine: !local && Some(task.owner) == me,
-                            waited: waited_s(task.for_ms, at),
-                        }
+                        Requester { key: "{task.task}", task: *task, viewer, at, clock }
                     }
                 }
 
@@ -146,7 +125,7 @@ pub fn CallGame() -> Element {
                         for slot in 0..snap.capacity {
                             match snap.queue.get(slot) {
                                 Some(request) => rsx! {
-                                    Message { request: *request, name: task_name(request.task, owner_of(request.task), me, local) }
+                                    Message { request: *request, name: name_of(request.task) }
                                 },
                                 None => rsx! { span { class: "ut-slot cr-slot" } },
                             }
@@ -156,22 +135,22 @@ pub fn CallGame() -> Element {
                         span { class: "mx-caption", "parked in send().await" }
                         div { class: "mx-chips",
                             for request in snap.parked.iter() {
-                                Message { request: *request, name: task_name(request.task, owner_of(request.task), me, local) }
+                                Message { request: *request, name: name_of(request.task) }
                             }
                         }
                     }
-                    span { class: "cr-arrow", "→" }
+                    span { class: "flow-arrow", "→" }
                 }
 
                 div { class: "cr-col cr-actor",
                     div { class: "mx-lock cr-actor-box",
-                        div { class: "mx-lock-head", if local { "the actor · you" } else { "the actor · the presenter" } }
+                        div { class: "mx-lock-head", if viewer.local { "the actor · you" } else { "the actor · the presenter" } }
                         div { class: "cr-state", "next_id: {snap.next_id}" }
                         div { class: "cr-hand",
                             match snap.in_hand {
                                 Some(request) => rsx! {
                                     span { class: "mx-caption", "in hand" }
-                                    Message { request, name: task_name(request.task, owner_of(request.task), me, local) }
+                                    Message { request, name: name_of(request.task) }
                                 },
                                 None => rsx! { span { class: "mx-empty", "nothing in hand" } },
                             }
@@ -200,7 +179,7 @@ pub fn CallGame() -> Element {
                         }
                     }
                     if let Some(last) = snap.last {
-                        Outcome { last, name: task_name(outcome_task(last), owner_of(outcome_task(last)), me, local) }
+                        Outcome { last, name: name_of(outcome_task(last)) }
                     }
                 }
             }
@@ -211,7 +190,7 @@ pub fn CallGame() -> Element {
                         RequestControls {
                             key: "{task.task}",
                             task,
-                            label: task_name(task.task, task.owner, me, local),
+                            label: viewer.name(task.task, task.owner),
                             connected: conn.connected(),
                             onwire: move |wire| dispatch(conn, sim, view, task.task, wire),
                         }
@@ -245,25 +224,28 @@ fn outcome_task(outcome: CallOutcome) -> u64 {
     }
 }
 
+/// Whether a phase is a call still waiting on the actor.
+fn waiting(phase: CallPhase) -> bool {
+    matches!(phase, CallPhase::Sending | CallPhase::Awaiting)
+}
+
 #[component]
-/// `waited` is worked out by the caller, which the clock re-renders: this
-/// component only re-renders when its props change.
-fn Requester(task: CallTask, name: String, mine: bool, waited: u64) -> Element {
-    let (class, text) = match task.phase {
-        CallPhase::Idle => ("idle", String::new()),
-        CallPhase::Sending => ("waiting", format!("send parked · {waited}s")),
-        CallPhase::Awaiting => ("waiting", format!("awaiting reply · {waited}s")),
-        CallPhase::Got(id) => ("got", format!("Ok({id})")),
-        CallPhase::Closed => ("failed", "Err(RecvError)".to_string()),
-        CallPhase::GaveUp => ("idle", "gave up".to_string()),
+fn Requester(task: CallTask, viewer: Viewer, at: f64, clock: Signal<f64>) -> Element {
+    let class = match task.phase {
+        CallPhase::Idle | CallPhase::GaveUp => "idle",
+        CallPhase::Sending | CallPhase::Awaiting => "waiting",
+        CallPhase::Got(_) => "got",
+        CallPhase::Closed => "failed",
     };
     rsx! {
-        span {
-            class: if mine { "mx-task {class} mine" } else { "mx-task {class}" },
-            style: "--c: {palette::sender_hex(task.task)};",
-            "{name}"
-            if !text.is_empty() {
-                span { class: "blocked-clock", "{text}" }
+        TaskChip { task: task.task, owner: task.owner, viewer, class,
+            match task.phase {
+                CallPhase::Idle => rsx! {},
+                CallPhase::Sending => rsx! { Waited { for_ms: task.for_ms, at, clock, label: "send parked · " } },
+                CallPhase::Awaiting => rsx! { Waited { for_ms: task.for_ms, at, clock, label: "awaiting reply · " } },
+                CallPhase::Got(id) => rsx! { span { class: "blocked-clock", "Ok({id})" } },
+                CallPhase::Closed => rsx! { span { class: "blocked-clock", "Err(RecvError)" } },
+                CallPhase::GaveUp => rsx! { span { class: "blocked-clock", "gave up" } },
             }
         }
     }
@@ -306,7 +288,7 @@ fn RequestControls(
     connected: bool,
     onwire: EventHandler<CallWire>,
 ) -> Element {
-    let busy = matches!(task.phase, CallPhase::Sending | CallPhase::Awaiting);
+    let busy = waiting(task.phase);
     rsx! {
         div { class: "mx-row", style: "--c: {palette::sender_hex(task.task)};",
             span { class: "mx-row-name", "{label}" }

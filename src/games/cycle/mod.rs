@@ -10,16 +10,10 @@ mod model;
 
 use dioxus::prelude::*;
 
-use crate::games::palette;
-use crate::games::ticker::{subscribe, use_frame_clock, use_local_tick};
+use crate::games::ticker::{use_frame_clock, use_local_tick};
+use crate::games::{palette, Waited};
 use crate::sim::now_ms;
 use model::{Actor, CycleSim, Msg, A, B, CAPACITY};
-
-/// Whole seconds since a sim-clock instant. Local sim, local clock: the
-/// instant and `now_ms` share an epoch here, unlike across the network.
-fn since_s(since: f64) -> u64 {
-    ((now_ms() - since) / 1000.0).floor().max(0.0) as u64
-}
 
 #[component]
 pub fn CycleGame() -> Element {
@@ -28,14 +22,10 @@ pub fn CycleGame() -> Element {
     use_local_tick(sim, clock, |()| {});
 
     let s = sim.read();
+    // The count-ups are the only thing that moves once the cycle seizes.
+    // They read the frame clock themselves; the sim is local, so its
+    // instants share `now_ms`'s epoch and need no receipt time.
     let deadlock = s.deadlocked_since();
-    let parked_anywhere =
-        s.actors.iter().any(|a| a.parked_since().is_some()) || s.injecting.is_some();
-    // The count-ups are the only thing that moves once the cycle seizes, so
-    // they need the frame clock even when the sim itself asks for none.
-    if parked_anywhere {
-        subscribe(clock);
-    }
     let cut = s.cut;
     let inboxes: [Vec<Msg>; 2] = [
         s.inboxes[A].buffer().copied().collect(),
@@ -71,16 +61,16 @@ pub fn CycleGame() -> Element {
                             "send into A"
                         }
                         if let Some((msg, _, since)) = injecting {
-                            span { class: "blocked-clock", "m{msg.id} parked · {since_s(since)}s" }
+                            Waited { for_ms: 0.0, at: since, clock, label: format!("m{} parked · ", msg.id) }
                         }
                     }
                     Inbox { messages: inboxes[A].clone() }
-                    ActorBox { name: "A", actor: actors[A], stuck: stuck[A], parked_s: actors[A].parked_since().map(since_s) }
-                    span { class: "cy-arrow", "→" }
+                    ActorBox { name: "A", actor: actors[A], stuck: stuck[A], clock }
+                    span { class: "flow-arrow", "→" }
                     Inbox { messages: inboxes[B].clone() }
-                    ActorBox { name: "B", actor: actors[B], stuck: stuck[B], parked_s: actors[B].parked_since().map(since_s) }
+                    ActorBox { name: "B", actor: actors[B], stuck: stuck[B], clock }
                     if cut {
-                        span { class: "cy-arrow", "→" }
+                        span { class: "flow-arrow", "→" }
                         div { class: "mx-lock cy-sink",
                             div { class: "mx-lock-head", "sink" }
                             div { class: "cr-state", "{sunk} eaten" }
@@ -96,7 +86,9 @@ pub fn CycleGame() -> Element {
                 match deadlock {
                     Some(since) => rsx! {
                         span { class: "note-pill resolved red",
-                            "deadlock · each parked sending to the other · {since_s(since)}s and counting"
+                            "deadlock · each parked sending to the other · "
+                            Waited { for_ms: 0.0, at: since, clock, class: "" }
+                            " and counting"
                         }
                     },
                     None if cut => rsx! {
@@ -155,9 +147,7 @@ fn MsgChip(msg: Msg, class: String) -> Element {
 }
 
 #[component]
-/// `parked_s` is computed by the caller: a component whose props did not
-/// change is not re-rendered, so a count-up worked out in here would freeze.
-fn ActorBox(name: String, actor: Actor, stuck: bool, parked_s: Option<u64>) -> Element {
+fn ActorBox(name: String, actor: Actor, stuck: bool, clock: Signal<f64>) -> Element {
     let class = match actor {
         Actor::Receiving => "mx-lock cy-actor",
         Actor::Handling(_) => "mx-lock cy-actor held",
@@ -173,10 +163,10 @@ fn ActorBox(name: String, actor: Actor, stuck: bool, parked_s: Option<u64>) -> E
                     div { class: "cr-state", "forwarding" }
                     MsgChip { msg, class: "ut-slot filled" }
                 },
-                Actor::Sending { msg, .. } => rsx! {
+                Actor::Sending { msg, since, .. } => rsx! {
                     div { class: "cr-state", "send().await" }
                     MsgChip { msg, class: "ut-slot parked" }
-                    span { class: "blocked-clock", "parked · {parked_s.unwrap_or_default()}s" }
+                    Waited { for_ms: 0.0, at: since, clock, label: "parked · " }
                 },
             }
         }

@@ -12,7 +12,7 @@
 //! made generic over three games without a trait object or a lock is the
 //! argument the slide makes.
 
-use axum::extract::ws::{Message, WebSocket};
+use axum::extract::ws::WebSocket;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use tokio::sync::{broadcast, mpsc, oneshot};
@@ -20,7 +20,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::clock::Ticking;
 use crate::server::auth::Connecting;
-use crate::server::{close_restarting, release, send_json, AppState, DEAD_PEER_TIMEOUT};
+use crate::server::{ask, close_restarting, relay, release, send_json, AppState};
 use crate::sim::now_ms;
 
 /// What a clock-driven game must supply to be run by [`TickingService`].
@@ -220,77 +220,23 @@ pub async fn handle_socket<G: TickingGame>(
     let mut evt_rx = handles.subscribe();
     drop(handles);
 
-    let (reply_tx, reply_rx) = oneshot::channel();
-    if cmd_tx.send(TickMsg::Get { reply: reply_tx }).await.is_err() {
-        release(&app, &identity);
-        close_restarting(&mut socket).await;
-        return;
-    }
-    let Ok(snapshot) = reply_rx.await else {
+    let Some(snapshot) = ask(&cmd_tx, |reply| TickMsg::Get { reply }).await else {
         release(&app, &identity);
         close_restarting(&mut socket).await;
         return;
     };
-    if send_json(&mut socket, &snapshot).await.is_err() {
-        release(&app, &identity);
-        return;
+    if send_json(&mut socket, &snapshot).await.is_ok() {
+        relay(
+            &mut socket,
+            &identity,
+            conn,
+            G::NAME,
+            &cmd_tx,
+            &mut evt_rx,
+            TickMsg::Wire,
+            |reply| TickMsg::Get { reply },
+        )
+        .await;
     }
-
-    loop {
-        tokio::select! {
-            msg = tokio::time::timeout(DEAD_PEER_TIMEOUT, socket.recv()) => match msg {
-                Ok(Some(Ok(Message::Text(text)))) => {
-                    if text.as_str() == crate::protocol::KEEPALIVE {
-                        continue;
-                    }
-                    let Ok(wire) = serde_json::from_str::<G::Wire>(text.as_str()) else {
-                        tracing::debug!(game = G::NAME, "ignoring undecodable wire");
-                        continue;
-                    };
-                    // Spectators watch the futures resolve; they are not the
-                    // I/O that resolves them. The client hides the controls
-                    // too, but hiding a button is not a check.
-                    if !identity.may_play() {
-                        continue;
-                    }
-                    if cmd_tx.send(TickMsg::Wire(wire)).await.is_err() {
-                        close_restarting(&mut socket).await;
-                        break;
-                    }
-                }
-                Ok(Some(Ok(_))) | Ok(None) | Ok(Some(Err(_))) => break,
-                // a phone that went into a tunnel, or a lid that closed
-                Err(_) => {
-                    tracing::debug!(conn, game = G::NAME, "peer went silent");
-                    break;
-                }
-            },
-            event = evt_rx.recv() => match event {
-                Ok(event) => {
-                    if send_json(&mut socket, &event).await.is_err() {
-                        break;
-                    }
-                }
-                Err(broadcast::error::RecvError::Closed) => {
-                    close_restarting(&mut socket).await;
-                    break;
-                }
-                // A lagged client missed cosmetics; the next snapshot makes
-                // it whole, so ask for one rather than dropping the socket.
-                Err(broadcast::error::RecvError::Lagged(missed)) => {
-                    tracing::debug!(conn, game = G::NAME, missed, "client lagged; resyncing");
-                    let (reply_tx, reply_rx) = oneshot::channel();
-                    if cmd_tx.send(TickMsg::Get { reply: reply_tx }).await.is_err() {
-                        break;
-                    }
-                    let Ok(snapshot) = reply_rx.await else { break };
-                    if send_json(&mut socket, &snapshot).await.is_err() {
-                        break;
-                    }
-                }
-            },
-        }
-    }
-
     release(&app, &identity);
 }

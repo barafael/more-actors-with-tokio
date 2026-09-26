@@ -623,23 +623,28 @@ pub enum MutexWire {
     Unlock,
 }
 
+/// Server → client for the room games: which connection you are, then the
+/// whole state after every change. There are no cosmetic events; the
+/// snapshot is all a client ever needs.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum MutexEvent {
+pub enum RoomEvent<S> {
     Hello { conn: u64 },
-    Snapshot { state: MutexSnapshot },
+    Snapshot { state: S },
 }
+
+pub type MutexEvent = RoomEvent<MutexSnapshot>;
 
 // ---- call and response: mpsc + oneshot ----
 
 /// How many requests the actor's inbox buffers before a requester parks.
 pub const CALL_CAPACITY: usize = 4;
 
-/// One `GetUniqueId { callback }` message. `listening` is false once the
-/// requester dropped its `oneshot::Receiver`: the callback still travels,
-/// but a send on it will fail.
+/// One `GetUniqueId { callback }` message, named by the requester who sent
+/// it. `listening` is false once the requester dropped its
+/// `oneshot::Receiver`: the callback still travels, but a send on it will
+/// fail.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CallRequest {
-    pub req: u64,
     pub task: u64,
     pub listening: bool,
 }
@@ -711,11 +716,7 @@ pub enum CallWire {
     DropCallback,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum CallEvent {
-    Hello { conn: u64 },
-    Snapshot { state: CallSnapshot },
-}
+pub type CallEvent = RoomEvent<CallSnapshot>;
 
 // ---- tickets and the presenter slot ----
 

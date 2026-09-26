@@ -6,7 +6,7 @@
 use axum::extract::ws::{WebSocket, WebSocketUpgrade};
 use axum::response::Response;
 
-use crate::protocol::{CallEvent, CallWire, MutexEvent, MutexWire, Role};
+use crate::protocol::{CallSnapshot, CallWire, MutexSnapshot, MutexWire, Role};
 use crate::server::auth::Connecting;
 use crate::server::room::{handle_socket, RoomGame, RoomHandles};
 use crate::server::AppState;
@@ -18,17 +18,9 @@ pub type CallHandles = RoomHandles<CallSim>;
 
 impl RoomGame for MutexSim {
     type Wire = MutexWire;
-    type Event = MutexEvent;
+    type Snapshot = MutexSnapshot;
 
     const NAME: &'static str = "mutex";
-
-    fn fresh() -> Self {
-        MutexSim::new()
-    }
-
-    fn hello(conn: u64) -> MutexEvent {
-        MutexEvent::Hello { conn }
-    }
 
     fn sync_now(&mut self, now: f64) {
         MutexSim::sync_now(self, now);
@@ -50,26 +42,16 @@ impl RoomGame for MutexSim {
         MutexSim::handle(self, conn, wire);
     }
 
-    fn snapshot_event(&self) -> MutexEvent {
-        MutexEvent::Snapshot {
-            state: self.snapshot(),
-        }
+    fn snapshot(&self) -> MutexSnapshot {
+        MutexSim::snapshot(self)
     }
 }
 
 impl RoomGame for CallSim {
     type Wire = CallWire;
-    type Event = CallEvent;
+    type Snapshot = CallSnapshot;
 
     const NAME: &'static str = "call";
-
-    fn fresh() -> Self {
-        CallSim::default()
-    }
-
-    fn hello(conn: u64) -> CallEvent {
-        CallEvent::Hello { conn }
-    }
 
     fn sync_now(&mut self, now: f64) {
         CallSim::sync_now(self, now);
@@ -91,10 +73,8 @@ impl RoomGame for CallSim {
         CallSim::handle(self, conn, role.may_present(), wire);
     }
 
-    fn snapshot_event(&self) -> CallEvent {
-        CallEvent::Snapshot {
-            state: self.snapshot(),
-        }
+    fn snapshot(&self) -> CallSnapshot {
+        CallSim::snapshot(self)
     }
 }
 

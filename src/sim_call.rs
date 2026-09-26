@@ -125,20 +125,22 @@ impl CallSim {
     }
 
     fn request(&mut self, task: u64) {
-        let now = self.now;
-        let req = self.next_req;
-        let Some(requester) = self.requesters.iter().find(|r| r.task == task) else {
+        let Some(index) = self.requesters.iter().position(|r| r.task == task) else {
             return;
         };
         // One call at a time per requester: it is awaiting the one it made.
-        if matches!(requester.phase, CallPhase::Sending | CallPhase::Awaiting) {
+        if matches!(
+            self.requesters[index].phase,
+            CallPhase::Sending | CallPhase::Awaiting
+        ) {
             return;
         }
+        let req = self.next_req;
         self.next_req += 1;
         self.callbacks.insert(req, OneshotCore::new());
         let offer = self.inbox.offer_send(Message { req, task });
-        let requester = self.requester(task).expect("checked above");
-        requester.current = Some((req, now));
+        let requester = &mut self.requesters[index];
+        requester.current = Some((req, self.now));
         match offer {
             SendOffer::Accepted => requester.phase = CallPhase::Awaiting,
             SendOffer::Blocked { waiter } => {
@@ -269,7 +271,6 @@ impl CallSim {
 
     pub fn snapshot(&self) -> CallSnapshot {
         let view = |message: &Message| CallRequest {
-            req: message.req,
             task: message.task,
             listening: self.listening(message.req),
         };

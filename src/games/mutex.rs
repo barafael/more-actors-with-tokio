@@ -12,9 +12,11 @@
 
 use dioxus::prelude::*;
 
-use crate::games::ticker::{subscribe, use_clock};
-use crate::games::{palette, use_game_connection, waited_s, GameConnection};
-use crate::protocol::{Game, MutexEvent, MutexSnapshot, MutexTask, MutexWire};
+use crate::games::ticker::use_clock;
+use crate::games::{
+    palette, use_game_connection, use_timed, GameConnection, TaskChip, Timed, Viewer, Waited,
+};
+use crate::protocol::{Game, MutexEvent, MutexSnapshot, MutexWire};
 use crate::sim::{now_ms, LOCAL_CONN};
 use crate::sim_mutex::MutexSim;
 use crate::{AppCtx, GameMode};
@@ -30,24 +32,10 @@ fn local_sim() -> MutexSim {
     sim
 }
 
-#[derive(Clone, Copy)]
-struct View {
-    snap: Signal<MutexSnapshot>,
-    /// When the current snapshot reached this client, for the count-ups.
-    received_at: Signal<f64>,
-}
-
-impl View {
-    fn set(mut self, snap: MutexSnapshot) {
-        self.snap.set(snap);
-        self.received_at.set(now_ms());
-    }
-}
-
 fn dispatch(
     conn: GameConnection,
     mut sim: Signal<MutexSim>,
-    view: View,
+    view: Timed<MutexSnapshot>,
     task: u64,
     wire: MutexWire,
 ) {
@@ -62,7 +50,12 @@ fn dispatch(
     }
 }
 
-fn restart(conn: GameConnection, ctx: AppCtx, mut sim: Signal<MutexSim>, view: View) {
+fn restart(
+    conn: GameConnection,
+    ctx: AppCtx,
+    mut sim: Signal<MutexSim>,
+    view: Timed<MutexSnapshot>,
+) {
     if conn.is_local() {
         sim.set(local_sim());
         view.set(sim.read().snapshot());
@@ -76,21 +69,20 @@ fn restart(conn: GameConnection, ctx: AppCtx, mut sim: Signal<MutexSim>, view: V
 #[derive(Clone, Copy, PartialEq)]
 enum Standing {
     Idle,
-    /// Parked in `lock().await`: the place in the queue, and whole seconds
-    /// waited so far. Seconds, not the snapshot's duration: the controls
-    /// only re-render when this value changes.
-    Waiting(usize, u64),
+    /// Parked in `lock().await`: the place in the queue, and the wait as
+    /// of the snapshot.
+    Waiting(usize, f64),
     Holding,
 }
 
-fn standing(snap: &MutexSnapshot, task: u64, at: f64) -> Standing {
+fn standing(snap: &MutexSnapshot, task: u64) -> Standing {
     if snap.holder.is_some_and(|h| h.task == task) {
         return Standing::Holding;
     }
     snap.waiters
         .iter()
         .position(|w| w.task == task)
-        .map(|place| Standing::Waiting(place + 1, waited_s(snap.waiters[place].for_ms, at)))
+        .map(|place| Standing::Waiting(place + 1, snap.waiters[place].for_ms))
         .unwrap_or(Standing::Idle)
 }
 
@@ -99,13 +91,10 @@ pub fn MutexGame() -> Element {
     let ctx: AppCtx = use_context();
     let mode = use_context::<GameMode>();
     let sim = use_signal(local_sim);
-    let view = View {
-        snap: use_signal(move || match mode {
-            GameMode::Local => sim.peek().snapshot(),
-            GameMode::Remote => MutexSnapshot::default(),
-        }),
-        received_at: use_signal(now_ms),
-    };
+    let view = use_timed(move || match mode {
+        GameMode::Local => sim.peek().snapshot(),
+        GameMode::Remote => MutexSnapshot::default(),
+    });
     let mut my_conn = use_signal(move || (mode == GameMode::Local).then_some(LOCAL_CONN));
 
     let conn = use_game_connection::<MutexEvent>("/ws/game/mutex", move |event| match event {
@@ -113,30 +102,26 @@ pub fn MutexGame() -> Element {
         MutexEvent::Snapshot { state } => view.set(state),
     });
 
-    // The count-ups need a frame clock, but only while someone is holding
-    // or waiting; an unlocked, empty mutex has nothing to count.
+    // Read by the count-up badges alone, so only they redraw each frame.
     let clock = use_clock();
     let snap = view.snap.read().clone();
-    if snap.holder.is_some() {
-        subscribe(clock);
-    }
     let at = (view.received_at)();
-
-    let mine: Vec<u64> = match my_conn() {
-        Some(me) => snap
-            .holder
-            .iter()
-            .chain(&snap.waiters)
-            .chain(&snap.idle)
-            .filter(|t| t.owner == me)
-            .map(|t| t.task)
-            .collect::<std::collections::BTreeSet<_>>()
-            .into_iter()
-            .collect(),
-        None => Vec::new(),
+    let viewer = Viewer {
+        me: my_conn(),
+        local: conn.is_local(),
     };
-    let local = conn.is_local();
-    let me = my_conn();
+
+    // holder, waiters and idle never share a task, so sorting is all it
+    // takes to keep each task's controls in a stable place
+    let mut mine: Vec<u64> = snap
+        .holder
+        .iter()
+        .chain(&snap.waiters)
+        .chain(&snap.idle)
+        .filter(|t| viewer.owns(t.owner))
+        .map(|t| t.task)
+        .collect();
+    mine.sort_unstable();
 
     rsx! {
         div { class: "diagram mutex-game",
@@ -151,13 +136,8 @@ pub fn MutexGame() -> Element {
                             span { class: "mx-empty", "nobody waiting" }
                         }
                         for (place, waiter) in snap.waiters.iter().enumerate() {
-                            TaskChip {
-                                key: "{waiter.task}",
-                                task: *waiter,
-                                me,
-                                local,
-                                badge: format!("{}. {}s", place + 1, waited_s(waiter.for_ms, at)),
-                                class: "waiting",
+                            TaskChip { key: "{waiter.task}", task: waiter.task, owner: waiter.owner, viewer, class: "waiting",
+                                Waited { for_ms: waiter.for_ms, at, clock, label: format!("{}. ", place + 1) }
                             }
                         }
                     }
@@ -171,12 +151,8 @@ pub fn MutexGame() -> Element {
                     div { class: "mx-holder",
                         match snap.holder {
                             Some(holder) => rsx! {
-                                TaskChip {
-                                    task: holder,
-                                    me,
-                                    local,
-                                    badge: format!("guard · {}s", waited_s(holder.for_ms, at)),
-                                    class: "holding",
+                                TaskChip { task: holder.task, owner: holder.owner, viewer, class: "holding",
+                                    Waited { for_ms: holder.for_ms, at, clock, label: "guard · " }
                                 }
                             },
                             None => rsx! { span { class: "mx-empty", "nobody holds the guard" } },
@@ -186,7 +162,7 @@ pub fn MutexGame() -> Element {
 
                 div { class: "mx-idle",
                     for task in snap.idle.iter() {
-                        TaskChip { key: "{task.task}", task: *task, me, local, badge: String::new(), class: "idle" }
+                        TaskChip { key: "{task.task}", task: task.task, owner: task.owner, viewer, class: "idle" }
                     }
                 }
             }
@@ -197,8 +173,10 @@ pub fn MutexGame() -> Element {
                         TaskControls {
                             key: "{task}",
                             task,
-                            label: if local { format!("task {task}") } else { "you".to_string() },
-                            standing: standing(&snap, task, at),
+                            label: if viewer.local { format!("task {task}") } else { "you".to_string() },
+                            standing: standing(&snap, task),
+                            at,
+                            clock,
                             connected: conn.connected(),
                             onwire: move |wire| dispatch(conn, sim, view, task, wire),
                         }
@@ -227,40 +205,12 @@ pub fn MutexGame() -> Element {
 }
 
 #[component]
-fn TaskChip(
-    task: MutexTask,
-    me: Option<u64>,
-    local: bool,
-    badge: String,
-    class: String,
-) -> Element {
-    let name = if !local && Some(task.owner) == me {
-        "you".to_string()
-    } else {
-        format!("task {}", task.task)
-    };
-    let mine = if Some(task.owner) == me && !local {
-        " mine"
-    } else {
-        ""
-    };
-    rsx! {
-        span {
-            class: "mx-task {class}{mine}",
-            style: "--c: {palette::sender_hex(task.task)};",
-            "{name}"
-            if !badge.is_empty() {
-                span { class: "blocked-clock", "{badge}" }
-            }
-        }
-    }
-}
-
-#[component]
 fn TaskControls(
     task: u64,
     label: String,
     standing: Standing,
+    at: f64,
+    clock: Signal<f64>,
     connected: bool,
     onwire: EventHandler<MutexWire>,
 ) -> Element {
@@ -276,9 +226,9 @@ fn TaskControls(
                         "lock().await"
                     }
                 },
-                Standing::Waiting(place, waited) => rsx! {
+                Standing::Waiting(place, for_ms) => rsx! {
                     button { class: "btn", disabled: true,
-                        "parked · #{place} in line · {waited}s"
+                        Waited { for_ms, at, clock, label: format!("parked · #{place} in line · "), class: "" }
                     }
                 },
                 Standing::Holding => rsx! {

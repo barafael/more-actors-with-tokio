@@ -12,28 +12,25 @@
 //! consuming method returning `Self`, and the snapshot is the only
 //! authority a client ever sees.
 
-use axum::extract::ws::{Message, WebSocket};
+use axum::extract::ws::WebSocket;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
-use crate::protocol::Role;
+use crate::protocol::{Role, RoomEvent};
 use crate::server::auth::Connecting;
-use crate::server::{close_restarting, release, send_json, AppState, DEAD_PEER_TIMEOUT};
+use crate::server::{ask, close_restarting, relay, release, send_json, AppState};
 use crate::sim::now_ms;
 
 /// What a per-connection game must supply to be run by [`RoomService`].
-pub trait RoomGame: Send + 'static {
+pub trait RoomGame: Default + Send + 'static {
     type Wire: DeserializeOwned + Send + 'static;
-    type Event: Clone + Serialize + Send + 'static;
+    /// Compared before and after each message, at one instant, to decide
+    /// whether there is anything to publish.
+    type Snapshot: Clone + PartialEq + Serialize + Send + 'static;
 
     const NAME: &'static str;
-
-    fn fresh() -> Self;
-
-    /// The first event a socket receives: which connection it is.
-    fn hello(conn: u64) -> Self::Event;
 
     /// Tell the sim what time it is before anything happens to it.
     fn sync_now(&mut self, now: f64);
@@ -46,8 +43,10 @@ pub trait RoomGame: Send + 'static {
 
     fn handle(&mut self, conn: u64, role: Role, wire: Self::Wire);
 
-    fn snapshot_event(&self) -> Self::Event;
+    fn snapshot(&self) -> Self::Snapshot;
 }
+
+type Event<G> = RoomEvent<<G as RoomGame>::Snapshot>;
 
 pub enum RoomMsg<G: RoomGame> {
     Join {
@@ -63,47 +62,53 @@ pub enum RoomMsg<G: RoomGame> {
         wire: G::Wire,
     },
     Get {
-        reply: oneshot::Sender<G::Event>,
+        reply: oneshot::Sender<Event<G>>,
     },
 }
 
+#[derive(Default)]
 pub struct RoomService<G> {
     sim: G,
 }
 
 impl<G: RoomGame> RoomService<G> {
-    pub fn new() -> Self {
-        Self { sim: G::fresh() }
-    }
-
-    fn publish(&self, events: &broadcast::Sender<G::Event>) {
-        events
-            .send(self.sim.snapshot_event())
-            .inspect_err(|_| tracing::trace!(game = G::NAME, "no subscribers for snapshot"))
-            .ok();
+    fn snapshot_event(&self) -> Event<G> {
+        RoomEvent::Snapshot {
+            state: self.sim.snapshot(),
+        }
     }
 
     pub async fn event_loop(
         mut self,
         mut rx: mpsc::Receiver<RoomMsg<G>>,
-        events: broadcast::Sender<G::Event>,
+        events: broadcast::Sender<Event<G>>,
         token: CancellationToken,
     ) -> Self {
         loop {
             tokio::select! {
                 msg = rx.recv() => {
                     let Some(msg) = msg else { break };
+                    // One instant for the whole message, so the two snapshots
+                    // differ only if the message changed something. A wire
+                    // that changes nothing — a waiter locking again, a
+                    // player trying to be the actor, a spectator joining —
+                    // publishes nothing.
                     self.sim.sync_now(now_ms());
+                    let before = self.sim.snapshot();
                     match msg {
                         RoomMsg::Join { conn, role } => self.sim.join(conn, role),
                         RoomMsg::Leave { conn } => self.sim.leave(conn),
                         RoomMsg::Wire { conn, role, wire } => self.sim.handle(conn, role, wire),
                         RoomMsg::Get { reply } => {
-                            reply.send(self.sim.snapshot_event()).ok();
-                            continue;
+                            reply.send(self.snapshot_event()).ok();
                         }
                     }
-                    self.publish(&events);
+                    if self.sim.snapshot() != before {
+                        events
+                            .send(self.snapshot_event())
+                            .inspect_err(|_| tracing::trace!(game = G::NAME, "no subscribers"))
+                            .ok();
+                    }
                 }
                 _ = token.cancelled() => break,
             }
@@ -112,15 +117,9 @@ impl<G: RoomGame> RoomService<G> {
     }
 }
 
-impl<G: RoomGame> Default for RoomService<G> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 pub struct RoomHandles<G: RoomGame> {
     cmd_tx: mpsc::Sender<RoomMsg<G>>,
-    evt_tx: broadcast::Sender<G::Event>,
+    evt_tx: broadcast::Sender<Event<G>>,
 }
 
 // Only the endpoints are cloned; a derive would demand `G: Clone`.
@@ -142,7 +141,7 @@ pub async fn backend<G: RoomGame>(
         let (evt_tx, _) = broadcast::channel(64);
         let events = evt_tx.clone();
         let task = tokio::spawn(async move {
-            RoomService::<G>::new()
+            RoomService::<G>::default()
                 .event_loop(cmd_rx, events, token)
                 .await;
         });
@@ -179,66 +178,26 @@ pub async fn handle_socket<G: RoomGame>(
         return;
     }
 
-    // From here on the room knows this connection, so every exit must
-    // leave it: breaking out of this block is the only way out.
-    'conn: {
-        let (reply_tx, reply_rx) = oneshot::channel();
-        if cmd_tx.send(RoomMsg::Get { reply: reply_tx }).await.is_err() {
-            close_restarting(&mut socket).await;
-            break 'conn;
-        }
-        let Ok(snapshot) = reply_rx.await else {
-            close_restarting(&mut socket).await;
-            break 'conn;
-        };
-        if send_json(&mut socket, &G::hello(conn)).await.is_err()
-            || send_json(&mut socket, &snapshot).await.is_err()
-        {
-            break 'conn;
-        }
-
-        loop {
-            tokio::select! {
-                msg = tokio::time::timeout(DEAD_PEER_TIMEOUT, socket.recv()) => match msg {
-                    Ok(Some(Ok(Message::Text(text)))) => {
-                        if text.as_str() == crate::protocol::KEEPALIVE {
-                            continue;
-                        }
-                        let Ok(wire) = serde_json::from_str::<G::Wire>(text.as_str()) else {
-                            tracing::debug!(game = G::NAME, "ignoring undecodable wire");
-                            continue;
-                        };
-                        // Spectators watch; the sim additionally checks the
-                        // role for anything only the presenter may do.
-                        if !identity.may_play() {
-                            continue;
-                        }
-                        if cmd_tx.send(RoomMsg::Wire { conn, role, wire }).await.is_err() {
-                            close_restarting(&mut socket).await;
-                            break 'conn;
-                        }
-                    }
-                    Ok(Some(Ok(_))) | Ok(None) | Ok(Some(Err(_))) => break,
-                    Err(_) => {
-                        tracing::debug!(conn, game = G::NAME, "peer went silent");
-                        break;
-                    }
-                },
-                event = evt_rx.recv() => match event {
-                    Ok(event) => {
-                        if send_json(&mut socket, &event).await.is_err() {
-                            break;
-                        }
-                    }
-                    Err(broadcast::error::RecvError::Closed) => {
-                        close_restarting(&mut socket).await;
-                        break 'conn;
-                    }
-                    // Every event is a snapshot, so the next one heals a lag.
-                    Err(broadcast::error::RecvError::Lagged(missed)) => {
-                        tracing::debug!(conn, game = G::NAME, missed, "client lagged");
-                    }
-                },
+    // From here on the room knows this connection, so every path below
+    // must end in the `Leave` after it.
+    match ask(&cmd_tx, |reply| RoomMsg::Get { reply }).await {
+        None => close_restarting(&mut socket).await,
+        Some(snapshot) => {
+            let hello: Event<G> = RoomEvent::Hello { conn };
+            if send_json(&mut socket, &hello).await.is_ok()
+                && send_json(&mut socket, &snapshot).await.is_ok()
+            {
+                relay(
+                    &mut socket,
+                    &identity,
+                    conn,
+                    G::NAME,
+                    &cmd_tx,
+                    &mut evt_rx,
+                    |wire| RoomMsg::Wire { conn, role, wire },
+                    |reply| RoomMsg::Get { reply },
+                )
+                .await;
             }
         }
     }

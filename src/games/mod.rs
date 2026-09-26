@@ -106,15 +106,103 @@ pub fn use_game_connection<E: DeserializeOwned>(
     }
 }
 
-/// Whole seconds a wait has lasted by now.
+/// A snapshot, and the moment it reached this client.
 ///
-/// `for_ms` is how long it had lasted when its snapshot was taken, and
-/// `received_at` is when that snapshot reached this client (`now_ms`). A
-/// duration plus a local receipt time, never a remote instant: the server's
-/// monotonic clock and this browser's do not share an epoch. Unbounded by
-/// design — nothing times out a parked `lock()` or `send()`.
-pub fn waited_s(for_ms: f64, received_at: f64) -> u64 {
-    ((for_ms + crate::sim::now_ms() - received_at) / 1000.0)
-        .floor()
-        .max(0.0) as u64
+/// Waits travel as durations as of the snapshot, never as instants: the
+/// server's monotonic clock and this browser's share no epoch. The receipt
+/// time is what lets a [`Waited`] badge keep counting between snapshots.
+pub struct Timed<S: 'static> {
+    pub snap: Signal<S>,
+    pub received_at: Signal<f64>,
+}
+
+impl<S> Clone for Timed<S> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<S> Copy for Timed<S> {}
+
+impl<S> Timed<S> {
+    pub fn set(mut self, snap: S) {
+        self.snap.set(snap);
+        self.received_at.set(crate::sim::now_ms());
+    }
+}
+
+pub fn use_timed<S>(init: impl FnOnce() -> S) -> Timed<S> {
+    Timed {
+        snap: use_signal(init),
+        received_at: use_signal(crate::sim::now_ms),
+    }
+}
+
+/// Who is looking at a room game: which connection this client is, and
+/// whether it is the export's lone player — who owns every task, so no one
+/// task of theirs is "you".
+#[derive(Clone, Copy, PartialEq)]
+pub struct Viewer {
+    pub me: Option<u64>,
+    pub local: bool,
+}
+
+impl Viewer {
+    /// Whether this client may drive a task with this owner.
+    pub fn owns(self, owner: u64) -> bool {
+        Some(owner) == self.me
+    }
+
+    /// Whether to single this task out as "you".
+    pub fn is_you(self, owner: u64) -> bool {
+        !self.local && self.owns(owner)
+    }
+
+    pub fn name(self, task: u64, owner: u64) -> String {
+        if self.is_you(owner) {
+            "you".to_string()
+        } else {
+            format!("task {task}")
+        }
+    }
+}
+
+/// One task in its owner's colour, with whatever badge the game gives it.
+#[component]
+pub fn TaskChip(
+    task: u64,
+    owner: u64,
+    viewer: Viewer,
+    class: String,
+    children: Element,
+) -> Element {
+    let you = if viewer.is_you(owner) { " mine" } else { "" };
+    rsx! {
+        span {
+            class: "mx-task {class}{you}",
+            style: "--c: {palette::sender_hex(task)};",
+            {viewer.name(task, owner)}
+            {children}
+        }
+    }
+}
+
+/// A wait that counts itself up: `for_ms` as of the snapshot that arrived
+/// at `at`, plus however long ago that was, in whole seconds.
+///
+/// It reads the frame clock itself, so each frame only this badge redraws;
+/// the game around it re-renders when a snapshot arrives and not before.
+/// Unbounded by design — nothing times out a parked `lock()` or `send()`.
+#[component]
+pub fn Waited(
+    for_ms: f64,
+    at: f64,
+    clock: Signal<f64>,
+    #[props(default)] label: String,
+    #[props(default = "blocked-clock".to_string())] class: String,
+) -> Element {
+    let seconds = ((for_ms + clock() - at) / 1000.0).floor().max(0.0) as u64;
+    rsx! {
+        span { class, "{label}{seconds}s" }
+    }
 }

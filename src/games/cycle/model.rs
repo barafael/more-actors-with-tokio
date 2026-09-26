@@ -49,7 +49,7 @@ pub enum Actor {
 }
 
 impl Actor {
-    pub fn parked_since(self) -> Option<f64> {
+    fn parked_since(self) -> Option<f64> {
         match self {
             Actor::Sending { since, .. } => Some(since),
             _ => None,

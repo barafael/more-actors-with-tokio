@@ -206,7 +206,7 @@ fn note(text: &str) -> Element {
 /// The oneshot pairs are coloured by request, so `cb2` in the buffer and
 /// `resp2` in the test's scope read as two ends of one thing.
 fn pair_class(index: usize) -> &'static str {
-    ["c0", "c1", "c2"][index % 3]
+    ["ut-pair-0", "ut-pair-1", "ut-pair-2"][index % 3]
 }
 
 /// What the running call holds in its own scope.
@@ -347,14 +347,13 @@ fn binding_text(binding: Binding, ty: &str) -> String {
     }
 }
 
-fn binding_class(binding: Binding) -> String {
+fn binding_class(binding: Binding) -> &'static str {
     match binding {
         Binding::Undeclared => "undeclared",
         Binding::Live => "live",
         Binding::Moved => "moved",
         Binding::Dropped => "dropped",
     }
-    .into()
 }
 
 fn resp_text(resp: Resp) -> String {
