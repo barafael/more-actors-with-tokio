@@ -24,6 +24,9 @@ pub struct ChannelState {
     pub flights: Signal<Vec<Flight>>,
     /// Monotonic flight-key generator (per client; flights are cosmetic).
     pub key: Signal<u64>,
+    /// When the current snapshot reached this client, so a parked send's
+    /// duration can keep counting between snapshots.
+    pub received_at: Signal<f64>,
 }
 
 pub fn empty_snapshot() -> MpscSnapshot {
@@ -40,11 +43,12 @@ pub fn empty_snapshot() -> MpscSnapshot {
 impl ChannelState {
     pub fn set_snapshot(mut self, snap: MpscSnapshot) {
         self.snap.set(snap);
+        self.received_at.set(crate::sim::now_ms());
     }
 
     pub fn apply(mut self, event: MpscEvent) {
         match event {
-            MpscEvent::Snapshot { state } => self.snap.set(state),
+            MpscEvent::Snapshot { state } => self.set_snapshot(state),
             MpscEvent::InFlight { conn, ch } => {
                 let key = *self.key.read() + 1;
                 self.key.set(key);

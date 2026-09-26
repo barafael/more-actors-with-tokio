@@ -135,16 +135,18 @@ pub enum ButtonEvent {
 /// One live `Sender<T>` handle: a connected client (`conn == owner`) or a
 /// clone of one (`owner` = the handle it was cloned from).
 ///
-/// `blocked_since` is the sim-clock millisecond at which the handle's send
-/// parked on a full queue (`None` while it is not blocked). The client
-/// counts elapsed time from it; there is no timeout — a blocked send waits
-/// until a receive frees a slot, however long that takes.
+/// `blocked_for_ms` is how long the handle's send had been parked on a full
+/// queue when the snapshot was taken (`None` while it is not blocked). A
+/// duration, not an instant: the server's monotonic clock and a phone's do
+/// not share an epoch, so the client adds the time since the snapshot
+/// arrived. There is no timeout — a blocked send waits until a receive
+/// frees a slot, however long that takes.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct SenderInfo {
     pub conn: u64,
     pub owner: u64,
     pub blocked: bool,
-    pub blocked_since: Option<f64>,
+    pub blocked_for_ms: Option<f64>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]

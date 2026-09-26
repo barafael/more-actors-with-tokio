@@ -116,6 +116,9 @@ pub struct MpscSim {
     pending_receives: usize,
     /// Values mid-animation: (due, conn, ch). Cosmetics only.
     landings: VecDeque<(f64, u64, char)>,
+    /// When each blocked handle's send parked, on this sim's clock. Kept
+    /// here rather than in `SenderInfo`: only the elapsed time is ever sent.
+    parked_at: BTreeMap<u64, f64>,
     in_flight: usize,
     last_received: Option<BufferChar>,
     flight_ms: f64,
@@ -131,6 +134,7 @@ impl MpscSim {
             waiting: None,
             pending_receives: 0,
             landings: VecDeque::new(),
+            parked_at: BTreeMap::new(),
             in_flight: 0,
             last_received: None,
             flight_ms,
@@ -159,7 +163,7 @@ impl MpscSim {
             conn,
             owner,
             blocked: false,
-            blocked_since: None,
+            blocked_for_ms: None,
         });
         self.core.add_sender();
         vec![MpscEvent::SenderJoined { conn, owner }]
@@ -173,6 +177,7 @@ impl MpscSim {
             return Vec::new();
         }
         self.senders.retain(|s| s.conn != conn);
+        self.parked_at.remove(&conn);
         let cancelled: Vec<WaiterId> = self
             .parked
             .iter()
@@ -238,9 +243,13 @@ impl MpscSim {
     fn set_blocked(&mut self, conn: u64, blocked: bool) {
         for sender in self.senders.iter_mut().filter(|s| s.conn == conn) {
             sender.blocked = blocked;
-            // stamp the wait so the node can count how long the full queue
-            // has held this send; cleared the moment it takes off
-            sender.blocked_since = blocked.then_some(self.now);
+        }
+        // stamp the wait so the node can count how long the full queue has
+        // held this send; cleared the moment it takes off
+        if blocked {
+            self.parked_at.insert(conn, self.now);
+        } else {
+            self.parked_at.remove(&conn);
         }
     }
 
@@ -327,7 +336,18 @@ impl MpscSim {
         let buffered: Vec<BufferChar> = self.core.buffer().copied().collect();
         let settled = buffered.len().saturating_sub(self.in_flight);
         MpscSnapshot {
-            senders: self.senders.clone(),
+            senders: self
+                .senders
+                .iter()
+                .map(|sender| SenderInfo {
+                    blocked_for_ms: self
+                        .parked_at
+                        .get(&sender.conn)
+                        .filter(|_| sender.blocked)
+                        .map(|since| (self.now - since).max(0.0)),
+                    ..*sender
+                })
+                .collect(),
             buffer: buffered[..settled].to_vec(),
             blocked_sends: self.core.blocked().map(|(_, value)| *value).collect(),
             in_flight: self.in_flight,
@@ -731,7 +751,7 @@ impl BroadcastSim {
                 conn: BROADCAST_HOST_CONN,
                 owner: BROADCAST_HOST_CONN,
                 blocked: false,
-                blocked_since: None,
+                blocked_for_ms: None,
             }],
             slots: BTreeMap::new(),
             receivers: Vec::new(),
@@ -787,7 +807,7 @@ impl BroadcastSim {
             conn,
             owner: requester,
             blocked: false,
-            blocked_since: None,
+            blocked_for_ms: None,
         });
         self.core.add_sender();
         vec![BroadcastEvent::SenderJoined {
@@ -945,7 +965,7 @@ impl BroadcastSim {
                 conn: BROADCAST_HOST_CONN,
                 owner: conn,
                 blocked: false,
-                blocked_since: None,
+                blocked_for_ms: None,
             });
             self.core.add_sender();
             events.push(BroadcastEvent::SenderJoined {
@@ -1239,7 +1259,7 @@ mod tests {
         let snap = sim.snapshot();
         let s2 = snap.senders.iter().find(|s| s.conn == 2).unwrap();
         assert!(s2.blocked);
-        assert_eq!(s2.blocked_since, Some(FLIGHT), "parked at the send instant");
+        assert_eq!(s2.blocked_for_ms, Some(0.0), "the wait starts at the send");
 
         // the wait only grows: nothing frees a blocked sender but a receive
         sim.advance(2_500.0);
@@ -1249,8 +1269,8 @@ mod tests {
                 .iter()
                 .find(|s| s.conn == 2)
                 .unwrap()
-                .blocked_since,
-            Some(FLIGHT)
+                .blocked_for_ms,
+            Some(2_500.0)
         );
 
         // a receive frees a slot, the parked send takes off, the clock stops
@@ -1258,7 +1278,7 @@ mod tests {
         let snap = sim.snapshot();
         let s2 = snap.senders.iter().find(|s| s.conn == 2).unwrap();
         assert!(!s2.blocked);
-        assert_eq!(s2.blocked_since, None);
+        assert_eq!(s2.blocked_for_ms, None);
     }
 
     #[test]

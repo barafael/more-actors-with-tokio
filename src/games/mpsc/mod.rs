@@ -9,7 +9,7 @@ mod state;
 use dioxus::prelude::*;
 
 use crate::clock::Ticking;
-use crate::games::{use_game_connection, GameConnection};
+use crate::games::{use_game_connection, waited_s, GameConnection};
 use crate::protocol::{MpscEvent, MpscSnapshot, MpscWire, SenderInfo, MPSC_CAPACITY};
 use crate::sim::{now_ms, MpscSim, LOCAL_CONN};
 use crate::{AppCtx, GameMode};
@@ -117,6 +117,7 @@ pub fn MpscGame() -> Element {
         snap: use_signal(move || initial_snapshot(mode)),
         flights: use_signal(Vec::new),
         key: use_signal(|| 0u64),
+        received_at: use_signal(now_ms),
     };
     // Local mode has no socket and therefore no `Hello`: the single player
     // owns every handle from the start (same convention as the broadcast
@@ -194,7 +195,7 @@ pub fn MpscGame() -> Element {
                 NodeView {
                     sender: *s,
                     label,
-                    since: s.blocked_since,
+                    for_ms: s.blocked_for_ms,
                     top,
                     height,
                 }
@@ -251,7 +252,11 @@ pub fn MpscGame() -> Element {
             ArrowLayer { senders: senders() }
 
             for node in nodes() {
-                SenderNode { key: "{node.sender.conn}", node: node }
+                SenderNode {
+                    key: "{node.sender.conn}",
+                    waited: node.for_ms.map(|ms| waited_s(ms, (chan.received_at)())),
+                    node: node,
+                }
             }
 
             FlightLayer { flights: flights(), senders: senders() }
@@ -311,20 +316,16 @@ pub fn MpscGame() -> Element {
 struct NodeView {
     sender: SenderInfo,
     label: String,
-    since: Option<f64>,
+    for_ms: Option<f64>,
     top: f64,
     height: f64,
 }
 
-/// Whole seconds this send has been parked on the full queue. It grows
-/// without bound by design: tokio never times out a blocked send — the
-/// count only stops when a receive frees a slot.
-fn blocked_seconds(since: f64) -> u64 {
-    ((now_ms() - since) / 1000.0).floor().max(0.0) as u64
-}
-
+/// `waited` is the whole seconds this send has been parked, worked out by
+/// the caller: the clock re-renders the game, but a component whose props
+/// did not change is skipped, so a count made in here would freeze.
 #[component]
-fn SenderNode(node: NodeView) -> Element {
+fn SenderNode(node: NodeView, waited: Option<u64>) -> Element {
     let s = node.sender;
     let title = if s.owner == s.conn {
         "connected player"
@@ -337,8 +338,8 @@ fn SenderNode(node: NodeView) -> Element {
             style: "top: {node.top}%; height: {node.height}%; --c: {palette::sender_hex(s.conn)}; --fg: {palette::sender_text_color(s.conn)};",
             title: title,
             "{node.label}"
-            if let Some(since) = node.since {
-                span { class: "blocked-clock", "{blocked_seconds(since)}s" }
+            if let Some(waited) = waited {
+                span { class: "blocked-clock", "{waited}s" }
             }
         }
     }
