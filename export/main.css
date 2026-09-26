@@ -486,6 +486,12 @@ strong {
 .diagram .create-row .field,
 .diagram .sender-btns .field,
 .diagram .os-actions .field {
+    /* the general input rule's minimum is 3.2rem, which the deck's root
+       font scales to 128px on a projector: without this it wins over the
+       width, and every one-character field becomes a text box. Not
+       shrinkable either, or a crowded flex row squeezes it below that. */
+    min-width: 0;
+    flex: none;
     width: 26px;
     height: 26px;
     text-align: center;
@@ -2241,9 +2247,8 @@ strong {
     gap: 6px;
 }
 
-/* the general input rule's rem minimum is 128px on a projector */
+/* oneshot's lone field sits in open space, so it can afford to be bigger */
 .diagram .os-actions .field {
-    min-width: 0;
     width: 34px;
     height: 30px;
     font-size: 16px;
