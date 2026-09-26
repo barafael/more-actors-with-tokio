@@ -1,0 +1,26 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>mutex</title>
+<meta name="game-mode" content="local">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bitter:ital@0;1&amp;family=Fira+Mono&amp;family=Patrick+Hand&amp;family=Space+Mono:wght@400;700&amp;display=swap">
+<link rel="stylesheet" href="main.css">
+<script>window.hydrate_queue=[];window.dx_hydrate=(id,data,debug_types,debug_locations)=>{let decoded=atob(data),bytes=Uint8Array.from(decoded,(c)=>c.charCodeAt(0));if(window.hydration_callback)window.hydration_callback(id,bytes,debug_types,debug_locations);else window.hydrate_queue.push([id,bytes,debug_types,debug_locations])};</script>
+<style>
+.export-nav{position:fixed;bottom:8px;left:50%;transform:translateX(-50%);z-index:60;display:flex;gap:10px;align-items:center;font:700 12px 'Space Mono',monospace;color:#77705f;background:rgba(250,245,232,.9);border:1px solid rgba(59,56,47,.35);padding:4px 12px;border-radius:0;user-select:none}
+.export-nav a{color:#eb5b20;text-decoration:none}
+.export-nav a:hover{text-decoration:underline}
+.export-nav .off{opacity:.35}
+</style>
+</head>
+<body>
+<div id="main">
+<!--placeholder0--><!--placeholder1--><!--placeholder2--><div class="deck-root" tabindex=0 autofocus=true data-node-hydration="3,keydown:1,mousemove:1"><div class="topbar"><span class="seat-badge local" data-node-hydration="4">single-player</span></div><div class="slide" data-node-hydration="5"><h2>Arc&#60;Mutex&#60;T&#62;&#62;</h2><p class="dim">Safe: only the guard&#39;s holder can touch the value. That is all it buys. Nobody else can do anything but wait, for as long as the holder likes.</p><div class="diagram mutex-game" data-node-hydration="6"><div class="game-header">Arc&#60;Mutex&#60;u64&#62;&#62;</div><div class="status"><!--node-id7-->single-player<!--#--></div><div class="mx-stage"><div class="mx-queue"><span class="mx-caption">parked in lock().await — first come, first served</span><div class="mx-chips"><span class="mx-empty" data-node-hydration="8">nobody waiting</span><!--placeholder9--></div></div><div class="mx-lock" data-node-hydration="10"><div class="mx-lock-head"><!--node-id11-->unlocked<!--#--></div><div class="mx-value"><!--node-id12-->0<!--#--></div><div class="mx-holder"><span class="mx-empty" data-node-hydration="13">nobody holds the guard</span></div></div><div class="mx-idle"><span class="mx-task idle" style="--c: #f28e2c;" data-node-hydration="14"><!--node-id15-->task 1<!--#--><!--placeholder16--></span><span class="mx-task idle" style="--c: #e15759;" data-node-hydration="17"><!--node-id18-->task 2<!--#--><!--placeholder19--></span><span class="mx-task idle" style="--c: #76b7b2;" data-node-hydration="20"><!--node-id21-->task 3<!--#--><!--placeholder22--></span></div></div><div class="mx-controls" data-node-hydration="23"><div class="mx-row" style="--c: #f28e2c;" data-node-hydration="24"><span class="mx-row-name"><!--node-id25-->task 1<!--#--></span><button class="btn await" data-node-hydration="26,click:1">lock().await</button></div><div class="mx-row" style="--c: #e15759;" data-node-hydration="27"><span class="mx-row-name"><!--node-id28-->task 2<!--#--></span><button class="btn await" data-node-hydration="29,click:1">lock().await</button></div><div class="mx-row" style="--c: #76b7b2;" data-node-hydration="30"><span class="mx-row-name"><!--node-id31-->task 3<!--#--></span><button class="btn await" data-node-hydration="32,click:1">lock().await</button></div></div><div class="game-footer"><span data-node-hydration="33"></span><button class="btn" data-node-hydration="34,click:1">restart</button></div></div></div><div class="chrome-zone" data-node-hydration="35"><div class="chrome" data-node-hydration="36"><button class="nav" aria-label="previous slide" data-node-hydration="37,click:1">←</button><span class="counter"><!--node-id38-->2 / 15<!--#--></span><button class="nav" aria-label="next slide" data-node-hydration="39,click:1">→</button></div></div><!--placeholder40--></div>
+</div>
+<nav class="export-nav"><a href="slide-0-title.html" rel="prev">&#8249; prev</a><span class="count">2 / 15</span><a href="slide-2-timer.html" rel="next">next &#8250;</a></nav>
+<script>window.initial_dioxus_hydration_data="hoEY9vb2gRj1gRj1gRj1";window.initial_dioxus_hydration_debug_types=[];window.initial_dioxus_hydration_debug_locations=[];</script>
+<script>(function(){var PREV="slide-0-title.html",NEXT="slide-2-timer.html";document.addEventListener("keydown",function(e){if(window.__dx_booted===true||e.defaultPrevented||e.altKey||e.ctrlKey||e.metaKey)return;var t=e.target;if(t&&(t.tagName==="INPUT"||t.tagName==="TEXTAREA"||t.tagName==="BUTTON"||t.isContentEditable))return;var k=e.key,go=null;if(k==="ArrowRight"||k==="PageDown"||k===" ")go=NEXT;else if(k==="ArrowLeft"||k==="PageUp")go=PREV;if(go){e.preventDefault();location.href=go;}});})();</script>
+<script type="module" src="./wasm/more-actors-with-tokio.js" onload="window.__dx_booted=true"></script>
+</body>
+</html>

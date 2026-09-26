@@ -13,11 +13,17 @@ See [CONCEPT.md](CONCEPT.md) for the talk structure.
 src/
   lib.rs        the deck: slides, routing, the two websocket planes
   slides.rs     each slide as an rsx component
-  games/        one module per minigame (button, mpsc, watch, broadcast)
-                plus qr.rs, the join code the audience scans
-  server/       one actor per game, supervised, behind axum State
+  games/        one module per minigame, plus qr.rs, the join code the
+                audience scans. Shared: mutex, button, timer, select, mpsc,
+                call (mpsc + oneshot), watch, broadcast. Single-player even
+                in the talk: unit_test (stepper), cycle (deadlock), oneshot
+  server/       one actor per game, supervised, behind axum State;
+                room.rs is the generic actor for games where who acts,
+                and who leaves, matters (mutex, call)
                 auth.rs decides roles; tickets.rs is the seat pool
   sim.rs        game drivers: registries and cosmetics over the channel cores
+  sim_mutex.rs  the hook: a fair Arc<Mutex<u64>> shared by the room
+  sim_call.rs   call-and-response over MpscCore + one OneshotCore per call
   protocol.rs   the wire types shared by client and server
 crates/
   sim-channels/ tokio's four channels as pure state machines (no tokio, wasm-safe)
@@ -122,6 +128,11 @@ URL — someone reading a neighbour's screen could take their seat. The worst
 case is one audience member playing as another, which is the right amount
 of security for a conference game.
 
-The chapters before the channels (mutex hook, timer, select, loop-select,
-the watchdog actor) and after them (whiteboard, OOOP closer) are described
-in [CONCEPT.md](CONCEPT.md) but not built yet.
+Deferred, per [CONCEPT.md](CONCEPT.md): the watchdog actor, the whiteboard
+app, natural shutdown across a DAG, and the recipe tooling (snippet
+extraction, jump-to-VS-Code). The OOOP closer is a sketch. Code on slides is
+removed for now; only the unit-test stepper shows any.
+
+In a debug build the client always dials `127.0.0.1:8080` (see `ws_url`),
+so every browser is a loopback presenter. Rehearse player roles with
+`dx serve --release`.

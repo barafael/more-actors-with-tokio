@@ -42,6 +42,29 @@ pub fn highlight(code: &str, token: &str) -> String {
     html
 }
 
+/// Highlight `code` into one HTML fragment per source line, newlines
+/// dropped, for views that style each line on its own. Highlighter state
+/// still carries across lines, so a string or comment spanning several
+/// stays coloured.
+pub fn highlight_lines(code: &str, token: &str) -> Vec<String> {
+    let Some(syntax) = syntax_set().find_syntax_by_token(token) else {
+        return code.lines().map(html_escape).collect();
+    };
+    let mut highlighter = HighlightLines::new(syntax, theme());
+    LinesWithEndings::from(code)
+        .map(|line| {
+            let Ok(regions) = highlighter.highlight_line(line, syntax_set()) else {
+                return html_escape(line.trim_end_matches('\n'));
+            };
+            let mut html = String::new();
+            for (style, text) in regions {
+                push_region(&mut html, style, text.trim_end_matches('\n'));
+            }
+            html
+        })
+        .collect()
+}
+
 fn push_region(html: &mut String, style: Style, text: &str) {
     if text.is_empty() {
         return;

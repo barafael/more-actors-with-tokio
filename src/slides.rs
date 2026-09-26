@@ -2,11 +2,15 @@ use dioxus::prelude::*;
 
 use crate::games::broadcast::BroadcastGame;
 use crate::games::button::ButtonGame;
+use crate::games::call::CallGame;
+use crate::games::cycle::CycleGame;
 use crate::games::mpsc::MpscGame;
+use crate::games::mutex::MutexGame;
+use crate::games::oneshot::OneshotGame;
 use crate::games::select::{LoopSelectGame, SelectGame};
 use crate::games::timer::TimerGame;
+use crate::games::unit_test::UnitTestGame;
 use crate::games::watch::WatchGame;
-use crate::highlight::highlight;
 use crate::{protocol::SLIDE_COUNT, AppCtx, GameMode};
 
 #[component]
@@ -16,6 +20,19 @@ pub fn Title() -> Element {
             h1 { "Actors with Tokio" }
             h2 { "Live minigames" }
             p { class: "dim", "You are the senders." }
+        }
+    }
+}
+
+/// CONCEPT.md §1: the hook. Shared state behind a lock, and the whole room
+/// holding the `Arc`.
+#[component]
+pub fn MutexGameSlide() -> Element {
+    rsx! {
+        div { class: "slide",
+            h2 { "Arc<Mutex<T>>" }
+            p { class: "dim", "Safe: only the guard's holder can touch the value. That is all it buys. Nobody else can do anything but wait, for as long as the holder likes." }
+            MutexGame {}
         }
     }
 }
@@ -69,26 +86,6 @@ pub fn ButtonGameSlide() -> Element {
     }
 }
 
-const RECIPE_CODE: &str = r#"struct ButtonService {
-    pressed: Option<Color>,
-}
-
-impl ButtonService {
-    pub async fn event_loop(
-        mut self,
-        mut rx: mpsc::Receiver<ButtonMsg>,
-        token: CancellationToken,
-    ) -> Self {
-        loop {
-            tokio::select! {
-                msg = rx.recv() => match msg { /* ... */ },
-                _ = token.cancelled() => break,
-            }
-        }
-        self
-    }
-}"#;
-
 #[component]
 pub fn MpscGameSlide() -> Element {
     rsx! {
@@ -96,6 +93,77 @@ pub fn MpscGameSlide() -> Element {
             h2 { "The mpsc channel" }
             p { class: "dim", "One bounded buffer, many senders. You are a sender: send on a full channel and you block until a receive frees a slot." }
             MpscGame {}
+        }
+    }
+}
+
+/// The cycle footgun: bounded channels in a loop.
+#[component]
+pub fn CycleGameSlide() -> Element {
+    rsx! {
+        div { class: "slide",
+            h2 { "Two actors, one cycle" }
+            p { class: "dim", "A sends to B, B sends to A, both inboxes bounded. Backpressure is what makes it seize: fill both, and each waits for the other to receive. Keep the topology a DAG." }
+            CycleGame {}
+        }
+    }
+}
+
+#[component]
+pub fn OneshotGameSlide() -> Element {
+    rsx! {
+        div { class: "slide",
+            h2 { "The oneshot channel" }
+            p { class: "dim", "One value, once. Every call takes its handle by value — send and await can each happen exactly once, and dropping either half is how the other finds out." }
+            OneshotGame {}
+        }
+    }
+}
+
+#[component]
+pub fn CallGameSlide() -> Element {
+    rsx! {
+        div { class: "slide",
+            h2 { "Call and response" }
+            p { class: "dim", "An mpsc message carrying a oneshot callback. You ask, then wait on your receiver. The presenter is the event loop — nobody gets an answer until it gets to them." }
+            CallGame {}
+        }
+    }
+}
+
+/// CONCEPT.md §10, sketched: Alan Kay's definition of OOP, read as a
+/// description of the actors the deck just built.
+#[component]
+pub fn KaySlide() -> Element {
+    rsx! {
+        div { class: "slide",
+            h2 { "Original OOP" }
+            blockquote { class: "kay-quote",
+                "OOP to me means only messaging, local retention and protection and hiding of state-process, and extreme late-binding of all things."
+                footer { class: "dim", "— Alan Kay" }
+            }
+            div { class: "kay-map",
+                div { class: "kay-row",
+                    span { class: "kay-term", "messaging" }
+                    span { class: "kay-means", "values moving along channels, ownership and all" }
+                }
+                div { class: "kay-row",
+                    span { class: "kay-term", "local retention" }
+                    span { class: "kay-means", "state lives inside the running event loop; nothing outside can reach it" }
+                }
+                div { class: "kay-row",
+                    span { class: "kay-term", "protection" }
+                    span { class: "kay-means", "a task is a panic boundary, and a message holds no borrowed references" }
+                }
+                div { class: "kay-row",
+                    span { class: "kay-term", "hiding" }
+                    span { class: "kay-means", "the state and its handler are private" }
+                }
+                div { class: "kay-row",
+                    span { class: "kay-term", "late binding" }
+                    span { class: "kay-means", "a Sender<Message> is a vtable whose target is chosen at spawn time" }
+                }
+            }
         }
     }
 }
@@ -127,7 +195,27 @@ pub fn Recipe() -> Element {
     rsx! {
         div { class: "slide",
             h2 { "The actor recipe" }
-            pre { class: "code", dangerous_inner_html: highlight(RECIPE_CODE, "rust") }
+            div { class: "recipe",
+                ul { class: "recipe-rules",
+                    li { strong { "The actor is its data." } " No channels, no sockets as fields: the loop owns the runtime resources." }
+                    li { strong { "The loop consumes and returns " } code { "Self" } strong { "." } " Inspect the final state, or run it again." }
+                    li { strong { "Spawning is the caller's call." } " Await it, spawn it, or put it in a " code { "FuturesUnordered" } "." }
+                    li { strong { "No handle type." } " An associated function over the " code { "Sender" } " keeps " code { "closed()" } " and friends in reach — and hands back the receiver." }
+                    li { strong { "Natural shutdown." } " Drop the last sender; " code { "recv()" } " drains, then yields " code { "None" } "." }
+                }
+            }
+        }
+    }
+}
+
+/// The recipe's payoff: the article's unit test, stepped line by line. Each
+/// viewer drives their own copy — it is a debugger, not a crowd game.
+#[component]
+pub fn UnitTestSlide() -> Element {
+    rsx! {
+        div { class: "slide",
+            h2 { "A test with nothing to race" }
+            UnitTestGame {}
         }
     }
 }

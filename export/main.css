@@ -484,7 +484,8 @@ strong {
 .diagram .sender-ctl .field,
 .diagram .tx-ctl .field,
 .diagram .create-row .field,
-.diagram .sender-btns .field {
+.diagram .sender-btns .field,
+.diagram .os-actions .field {
     width: 26px;
     height: 26px;
     text-align: center;
@@ -1597,5 +1598,824 @@ strong {
     .timer-game .timer-dial,
     .select-game .timer-dial {
         transform: translate(-50%, -58%) scale(0.8);
+    }
+}
+
+/* ---- the actor recipe: the article's code beside its rules ---- */
+
+/* the rules alone, for now: code comes back with the snippet tooling */
+.recipe {
+    max-width: 38em;
+}
+
+.recipe-rules {
+    margin: 1em 0 0;
+    padding-left: 1.1em;
+    font-size: 0.78rem;
+    line-height: 1.4;
+}
+
+.recipe-rules li + li {
+    margin-top: 0.55em;
+}
+
+.recipe-rules code,
+.ut-tick {
+    font-family: 'Fira Mono', monospace;
+    font-size: 0.9em;
+    color: var(--color-highlight);
+}
+
+
+/* ---- unit-test stepper: a debugger over the article's test ----
+   Laid out in flow rather than absolutely: three panes (the test, the call
+   it is inside, the world it left), then the narration, then the controls.
+   Everything sizes off the container, so the code stays legible from a
+   projector down to a laptop. */
+
+.unit-test-game {
+    height: 74vh;
+    display: grid;
+    grid-template-rows: minmax(0, 1fr) auto auto;
+    gap: 8px;
+    padding: 46px 14px 10px;
+}
+
+.ut-panes {
+    display: grid;
+    grid-template-columns: minmax(0, 1.4fr) minmax(0, 1.1fr) minmax(0, 0.8fr);
+    gap: 10px;
+    min-height: 0;
+}
+
+.ut-pane {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    background: #fff;
+    border: 1px solid #e8dfc0;
+    transition: border-color 0.2s ease;
+}
+
+/* the callee pane while a call is actually running */
+.ut-pane.live {
+    border-color: var(--color-highlight);
+}
+
+.ut-pane-head {
+    flex: none;
+    padding: 4px 8px;
+    border-bottom: 1px solid #e8dfc0;
+    background: #fbf7ec;
+    font: 600 clamp(10px, 2cqh, 16px) var(--font-label);
+    color: var(--color-dimmed);
+    white-space: pre;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.ut-code {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    padding: 6px 0;
+    font-family: 'Fira Mono', monospace;
+    font-size: clamp(9px, min(2.6cqh, 0.86cqw), 22px);
+    line-height: 1.3;
+    letter-spacing: 0;
+}
+
+.ut-line {
+    display: flex;
+    min-height: 1.3em;
+    padding-right: 8px;
+    border-left: 4px solid transparent;
+    white-space: pre;
+    transition: background-color 0.15s ease;
+}
+
+.ut-gutter {
+    flex: none;
+    width: 2.6em;
+    padding-right: 0.8em;
+    text-align: right;
+    color: #c4bba5;
+    user-select: none;
+}
+
+.ut-line.ran .ut-gutter {
+    color: var(--color-green);
+}
+
+.ut-line.now {
+    background: color-mix(in srgb, var(--color-highlight) 16%, #fff);
+    border-left-color: var(--color-highlight);
+}
+
+.ut-line.calling {
+    background: color-mix(in srgb, var(--color-highlight) 7%, #fff);
+    border-left: 4px dashed var(--color-highlight);
+}
+
+.ut-line.parked {
+    background: color-mix(in srgb, var(--color-red) 16%, #fff);
+    border-left-color: var(--color-red);
+}
+
+.ut-locals {
+    flex: none;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 5px;
+    min-height: 2.1em;
+    padding: 5px 8px;
+    border-top: 1px solid #e8dfc0;
+    font: clamp(9px, 2cqh, 15px) var(--font-label);
+}
+
+.ut-locals-head {
+    color: #b3aa93;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+}
+
+.ut-chip {
+    padding: 1px 6px;
+    border: 1.5px solid var(--c, var(--ink));
+    background: color-mix(in srgb, var(--c, var(--ink)) 12%, #fff);
+    white-space: nowrap;
+}
+
+/* one hue per oneshot pair, shared by its callback and its resp */
+.c0 { --c: var(--color-red); }
+.c1 { --c: var(--color-green); }
+.c2 { --c: var(--color-blue); }
+
+.ut-world {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+    padding: 8px;
+    font: clamp(9px, min(2.2cqh, 0.76cqw), 17px) var(--font-label);
+    letter-spacing: 0;
+}
+
+.ut-outcome {
+    align-self: flex-start;
+    padding: 2px 9px;
+    border: 2px dashed #999;
+    font-weight: 700;
+    color: var(--color-dimmed);
+}
+
+.ut-outcome.passed {
+    border-style: solid;
+    border-color: var(--color-green);
+    color: var(--color-green);
+}
+
+.ut-outcome.hangs {
+    border-style: solid;
+    border-color: var(--color-red);
+    color: var(--color-red);
+}
+
+.ut-actor {
+    padding: 6px 9px;
+    border: 2px solid var(--ink);
+    background: #fffdf6;
+}
+
+.ut-actor.unborn {
+    opacity: 0.35;
+    border-style: dashed;
+}
+
+.ut-actor.running {
+    border-color: var(--color-highlight);
+    background: color-mix(in srgb, var(--color-highlight) 10%, #fff);
+}
+
+.ut-actor.parked {
+    border-color: var(--color-red);
+    border-style: dashed;
+    background: color-mix(in srgb, var(--color-red) 8%, #fff);
+}
+
+.ut-actor-state {
+    font-weight: 700;
+}
+
+.ut-actor-where {
+    margin-top: 2px;
+    color: var(--color-dimmed);
+}
+
+.ut-chan-head {
+    color: var(--color-dimmed);
+}
+
+.ut-slots {
+    display: flex;
+    gap: 5px;
+    margin-top: 4px;
+    min-height: 1.9em;
+}
+
+.ut-slot {
+    min-width: 3.2em;
+    padding: 2px 5px;
+    border: 2px solid #333;
+    background: #fff;
+    text-align: center;
+    font-weight: 700;
+}
+
+.ut-slot.filled {
+    border-color: var(--c);
+    background: color-mix(in srgb, var(--c) 18%, #fff);
+}
+
+/* a send waiting outside the buffer for room that never comes */
+.ut-slot.parked {
+    border-style: dashed;
+    border-color: var(--c);
+    color: var(--c);
+    background: transparent;
+    margin-left: 6px;
+}
+
+.ut-scope {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    column-gap: 10px;
+    row-gap: 3px;
+}
+
+.ut-row {
+    display: contents;
+}
+
+.ut-name {
+    font-weight: 700;
+}
+
+.ut-row.undeclared {
+    opacity: 0.35;
+}
+
+.ut-row.moved .ut-val {
+    font-style: italic;
+    color: var(--color-dimmed);
+}
+
+.ut-row.dropped .ut-val {
+    text-decoration: line-through;
+    color: var(--color-dimmed);
+}
+
+.ut-row.c0 .ut-name,
+.ut-row.c1 .ut-name,
+.ut-row.c2 .ut-name {
+    color: var(--c);
+}
+
+.ut-row.holds .ut-val {
+    color: var(--c);
+    font-weight: 700;
+}
+
+.ut-note {
+    margin: 0;
+    min-height: 2.7em;
+    font: 400 clamp(14px, 3.1cqh, 26px) / 1.3 var(--font-hand);
+    color: var(--ink);
+}
+
+.ut-controls {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+}
+
+.ut-steps,
+.ut-variants {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+}
+
+.ut-count {
+    margin-left: 4px;
+    font: 600 12px var(--font-label);
+    color: var(--color-dimmed);
+}
+
+.ut-variants .btn.on {
+    background: var(--ink);
+    color: var(--color-background);
+}
+
+/* Phones: the panes stack and the stepper grows as tall as it needs,
+   which size containment would otherwise collapse to nothing. */
+@media (max-width: 700px) {
+    .unit-test-game {
+        height: auto;
+        container-type: inline-size;
+    }
+
+    .ut-panes {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .ut-code,
+    .ut-world,
+    .ut-locals,
+    .ut-pane-head {
+        font-size: 11px;
+    }
+
+    /* the status pill already says what this is; two pills do not fit */
+    .unit-test-game .game-header {
+        display: none;
+    }
+
+    .ut-code {
+        max-height: 50vh;
+    }
+}
+
+/* ---- shared by the mutex, call, oneshot and cycle games ----
+   Flow layout: a stage that centres its contents, controls in a row below
+   it, the usual footer. Chips carry their task's colour in --c. */
+
+.mutex-game,
+.call-game,
+.oneshot-game,
+.cycle-game {
+    height: 60vh;
+    display: flex;
+    flex-direction: column;
+    padding: 46px 14px 52px;
+    gap: 10px;
+}
+
+.mx-caption {
+    font: 600 clamp(10px, 2.2cqh, 14px) var(--font-label);
+    color: var(--color-dimmed);
+    letter-spacing: 0.04em;
+}
+
+.mx-empty {
+    font: 400 clamp(14px, 3.4cqh, 22px) var(--font-hand);
+    color: var(--color-dimmed);
+}
+
+.mx-chips {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 6px;
+}
+
+.mx-task {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 9px;
+    border: 2px solid var(--c, var(--ink));
+    background: color-mix(in srgb, var(--c, var(--ink)) 18%, #fff);
+    font: 700 clamp(11px, 2.4cqh, 15px) var(--font-label);
+    color: var(--ink);
+    white-space: nowrap;
+}
+
+.mx-task.idle {
+    opacity: 0.6;
+    background: #fff;
+}
+
+.mx-task.waiting {
+    border-style: dashed;
+    background: #e8e3d6;
+}
+
+.mx-task.holding,
+.mx-task.got {
+    background: color-mix(in srgb, var(--c, var(--ink)) 32%, #fff);
+}
+
+.mx-task.failed {
+    border-color: var(--color-red);
+}
+
+/* your own task, among two dozen */
+.mx-task.mine {
+    outline: 3px solid var(--color-highlight);
+    outline-offset: 2px;
+}
+
+/* the box in the middle: the mutex, an actor, a sink */
+.mx-lock {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 18px;
+    min-width: 190px;
+    border: 3px solid var(--ink);
+    background: #fffdf6;
+    transition: border-color 0.2s ease, background-color 0.2s ease;
+}
+
+.mx-lock.held {
+    border-color: var(--color-highlight);
+    background: color-mix(in srgb, var(--color-highlight) 10%, #fff);
+}
+
+.mx-lock.parked {
+    border-color: var(--color-red);
+    border-style: dashed;
+    background: color-mix(in srgb, var(--color-red) 8%, #fff);
+}
+
+.mx-lock-head {
+    font: 700 clamp(10px, 2.2cqh, 14px) var(--font-label);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--color-dimmed);
+}
+
+.mx-controls {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 8px 18px;
+}
+
+.mx-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding-left: 8px;
+    border-left: 5px solid var(--c, var(--ink));
+}
+
+.mx-row-name {
+    font: 700 13px var(--font-label);
+    min-width: 3.5em;
+}
+
+/* ---- mutex ---- */
+
+.mx-stage {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+}
+
+.mx-queue {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    max-width: 100%;
+}
+
+.mx-value {
+    font: 700 clamp(28px, 10cqh, 64px) var(--font-label);
+    line-height: 1;
+}
+
+.mx-idle {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 6px;
+}
+
+/* ---- call and response ---- */
+
+.cr-stage {
+    flex: 1;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr) minmax(0, 1fr);
+    gap: 14px;
+    align-items: center;
+}
+
+.cr-col {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.cr-requesters {
+    flex-wrap: wrap;
+    max-height: 100%;
+    overflow: auto;
+}
+
+.cr-inbox {
+    position: relative;
+}
+
+.cr-slots {
+    font: 700 clamp(10px, 2.2cqh, 14px) var(--font-label);
+}
+
+.cr-slot {
+    min-width: 4.4em;
+    min-height: 2em;
+}
+
+.cr-msg {
+    font: 700 clamp(10px, 2.2cqh, 14px) var(--font-label);
+}
+
+.cr-msg.deaf {
+    opacity: 0.45;
+    text-decoration: line-through;
+}
+
+.cr-arrow {
+    font: 700 clamp(18px, 5cqh, 34px) var(--font-label);
+    color: var(--color-dimmed);
+}
+
+.cr-state {
+    font: 700 clamp(13px, 3cqh, 20px) var(--font-label);
+}
+
+.cr-hand {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    min-height: 52px;
+}
+
+.cr-host {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 6px;
+}
+
+.cr-outcome {
+    white-space: normal;
+    text-align: center;
+    font-size: clamp(11px, 2.3cqh, 14px);
+}
+
+/* ---- oneshot ---- */
+
+.os-stage {
+    flex: 1;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    align-items: center;
+    gap: 18px;
+}
+
+.os-half {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+}
+
+.os-handle {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    min-width: 170px;
+    padding: 10px 14px;
+    border: 3px dashed #bbb;
+    background: #f5f1e6;
+    color: var(--color-dimmed);
+    font-family: var(--font-label);
+    transition: all 0.25s ease;
+}
+
+.os-handle.live {
+    border-style: solid;
+    border-color: var(--color-green);
+    background: color-mix(in srgb, var(--color-green) 16%, #fff);
+    color: var(--ink);
+}
+
+.os-handle-name {
+    font: 700 clamp(18px, 5cqh, 30px) var(--font-label);
+}
+
+.os-handle-kind {
+    font-size: clamp(10px, 2.2cqh, 13px);
+}
+
+.os-handle-state {
+    font: 400 clamp(14px, 3.2cqh, 20px) var(--font-hand);
+}
+
+.os-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    align-items: center;
+    gap: 6px;
+}
+
+/* the general input rule's rem minimum is 128px on a projector */
+.diagram .os-actions .field {
+    min-width: 0;
+    width: 34px;
+    height: 30px;
+    font-size: 16px;
+}
+
+.os-slot {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    padding: 12px 20px;
+    border: 2px solid var(--ink);
+    background: #fff;
+}
+
+.os-slot.full {
+    border-color: var(--color-highlight);
+    background: color-mix(in srgb, var(--color-highlight) 14%, #fff);
+}
+
+.os-slot-value {
+    font: 700 clamp(18px, 5cqh, 30px) var(--font-label);
+}
+
+.os-log {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    min-height: 84px;
+    font: clamp(11px, 2.4cqh, 15px) 'Fira Mono', monospace;
+}
+
+.os-line {
+    display: flex;
+    gap: 8px;
+    color: var(--ink);
+}
+
+.os-line:not(:last-child) {
+    opacity: 0.5;
+}
+
+.os-line.err .os-result {
+    color: var(--color-red);
+}
+
+.os-arrow {
+    font-family: 'Bitter', serif;
+    color: var(--color-dimmed);
+}
+
+.os-result {
+    color: var(--color-green);
+    font-weight: 700;
+}
+
+/* ---- cycle ---- */
+
+.cy-stage {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    gap: 6px;
+}
+
+.cy-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    font: 700 clamp(10px, 2.3cqh, 14px) var(--font-label);
+}
+
+.cy-outside {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+}
+
+.cy-inbox .ut-slot {
+    min-width: 3em;
+    min-height: 2em;
+}
+
+.cy-actor {
+    min-width: 160px;
+    min-height: 118px;
+    justify-content: center;
+}
+
+.cy-arrow {
+    font-size: clamp(18px, 5cqh, 34px);
+    color: var(--color-dimmed);
+}
+
+/* the way back: a bracket under the row, from B round to A's inbox */
+.cy-return {
+    width: 62%;
+    height: 34px;
+    border: 2px solid var(--color-dimmed);
+    border-top: none;
+    text-align: center;
+    padding-top: 8px;
+    font: 400 clamp(13px, 3cqh, 20px) var(--font-hand);
+    color: var(--color-dimmed);
+}
+
+.cy-verdict {
+    display: flex;
+    justify-content: center;
+}
+
+.cy-verdict .note-pill {
+    white-space: normal;
+    text-align: center;
+}
+
+/* ---- Alan Kay closer ---- */
+
+.kay-quote {
+    margin: 0.8em 0 0;
+    padding: 0.4em 0 0.4em 1em;
+    border-left: 6px solid var(--color-highlight);
+    font: italic 400 0.9rem/1.4 'Bitter', serif;
+}
+
+.kay-quote footer {
+    margin-top: 0.3em;
+    font-style: normal;
+    font-size: 0.6rem;
+}
+
+.kay-map {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 0.35em 1.2em;
+    margin-top: 1em;
+    font-size: 0.62rem;
+}
+
+.kay-row {
+    display: contents;
+}
+
+.kay-term {
+    font: 700 0.95em var(--font-label);
+    color: var(--color-highlight);
+}
+
+/* Phones: every stage stacks, and the games grow as tall as they need. */
+@media (max-width: 700px) {
+    .mutex-game,
+    .call-game,
+    .oneshot-game,
+    .cycle-game {
+        height: auto;
+        min-height: 60vh;
+        container-type: inline-size;
+    }
+
+    .cr-stage,
+    .os-stage {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .cy-return {
+        width: 90%;
     }
 }

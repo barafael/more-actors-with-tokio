@@ -6,6 +6,7 @@ Audience-playable minigames for specific concepts.
 ## Talk structure
 
 1. **Hook — shared synchronized state**: `Arc<Mutex<T>>` buys safety but not backpressure, lifecycle, panic isolation, or deterministic tests. A mutex is an unstructured actor.
+  - **Built** (`sim_mutex.rs`, `games/mutex.rs`): a fair `Arc<Mutex<u64>>`; every phone is a task, waiters count up the seconds they have been parked, a phone that leaves drops its guard. In the export the lone player runs three tasks.
   - Mutex is the first shared minigame. Display QR code. Somebody will lock it. On unlock, somebody is selected who is waiting on the lock who gets unlocked. Nobody else can do anything because they get blocked on acquire. So this is not ideal.
 2. Let's start with futures though. **Built.**
   - Timer minigame. Not interactive. When activated, the future blocks until the next time the seconds are a multiple of 10. Then it yields the number of seconds waited. For comfort, a seconds-of-the-minute timer is displayed.
@@ -18,14 +19,17 @@ Audience-playable minigames for specific concepts.
 5. Because loop-select needs to run somewhere, let's put it in an actor. Make a page minigame where the watchdog actor from https://github.com/barafael/watchdog is visualized.
 6. **The actor recipe** (from the blog): actor = plain data; event loop as consuming method returning `Self`; no handle types; natural shutdown by dropping; deterministic unit tests.
    This is the meat chapter. It contains a bunch of code examples. Especially the ones in the end with the deterministic testing. Include buttons here which open vscode at the correct file/line/col/ in the example projects.
+  - **Built**: the recipe slide shows the blog's `UniqueIdService` beside its five rules.
+  - Unit-test stepper, **built** (`src/games/unit_test/`). The blog's `should_increment_unique_id`, stepped line by line like a debugger: step into `get_unique_id` and `event_loop`, step over, step back. Panes show the test, the call in progress, and the world after each line: the actor's state and where it lives, the mpsc buffer, and each oneshot pair coloured end to end. Two broken variants, one per precondition: `forget drop(tx)` parks `recv()` forever, and `channel(2)` parks the third send before the loop ever runs. **Not collab**: every viewer steps their own copy, even in the talk, and there is no server actor. The whole run is precomputed as a trace, so the game is just an index into it and every frame is unit-tested.
 7. How do we connect actors? How do they talk? Channel minigames. The audience member is an actor.
-  - `mpsc` (inbox + backpressure + deadlock-cycle footgun),
-  - `oneshot` (transfer single value, an exercise in your understanding of ownership),
-  - `mpsc` with `oneshot` (call-and-response),
+  **Built, in this order**: mpsc, the cycle, oneshot, call-and-response, broadcast, watch.
+  - `mpsc` (inbox + backpressure + deadlock-cycle footgun), the footgun as its own single-player game: A and B forward to each other over bounded inboxes (`MpscCore`), seize at six messages, drain once the cycle is cut,
+  - `oneshot` (transfer single value, an exercise in your understanding of ownership), single-player: every call takes its handle by value, and each result (including `Err(v)` handed back and `RecvError`) is written down,
+  - `mpsc` with `oneshot` (call-and-response): phones call `get_unique_id`, the presenter is the event loop and answers or drops each callback by hand; waiting phones count up,
   - `broadcast` (fan-out, honest lag),
   - `watch` (latest-value config).
-8. Channels determine architecture. Build whiteboard app in steps.
-10. **Garnish — OOOP**: Alan Kay; message passing was the point; `Sender<Message>` as a late-bound vtable.
+8. Channels determine architecture. Build whiteboard app in steps. *Deferred.*
+10. **Garnish — OOOP** (*sketched*: the quote and the five-way mapping, no game): Alan Kay; message passing was the point; `Sender<Message>` as a late-bound vtable.
 
 ## The Slide App
 

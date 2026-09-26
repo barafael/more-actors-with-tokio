@@ -5,6 +5,8 @@ pub mod protocol;
 #[cfg(feature = "server")]
 pub mod server;
 pub mod sim;
+pub mod sim_call;
+pub mod sim_mutex;
 pub mod sim_timer;
 pub mod slides;
 pub mod ws_client;
@@ -277,20 +279,26 @@ pub fn Deck(mode: GameMode, initial_slide: usize) -> Element {
             div { class: "topbar",
                 SeatBadge {}
             }
-            // CONCEPT.md's arc: futures first (a timer, then real I/O,
-            // then a race, then that race in a loop), which makes the actor
-            // recipe a summary rather than an introduction — and only then
-            // the channels that connect actors to each other.
+            // CONCEPT.md's arc: the mutex as the problem, then futures (a
+            // timer, real I/O, a race, the race in a loop), which makes the
+            // actor recipe a summary rather than an introduction; then the
+            // channels that connect actors, in the plan's order; then Kay.
             { match slide() {
                 0 => rsx! { slides::Title {} },
-                1 => rsx! { slides::TimerGameSlide {} },
-                2 => rsx! { slides::ButtonGameSlide {} },
-                3 => rsx! { slides::SelectGameSlide {} },
-                4 => rsx! { slides::LoopSelectGameSlide {} },
-                5 => rsx! { slides::Recipe {} },
-                6 => rsx! { slides::MpscGameSlide {} },
-                7 => rsx! { slides::WatchGameSlide {} },
-                _ => rsx! { slides::BroadcastGameSlide {} },
+                1 => rsx! { slides::MutexGameSlide {} },
+                2 => rsx! { slides::TimerGameSlide {} },
+                3 => rsx! { slides::ButtonGameSlide {} },
+                4 => rsx! { slides::SelectGameSlide {} },
+                5 => rsx! { slides::LoopSelectGameSlide {} },
+                6 => rsx! { slides::Recipe {} },
+                7 => rsx! { slides::UnitTestSlide {} },
+                8 => rsx! { slides::MpscGameSlide {} },
+                9 => rsx! { slides::CycleGameSlide {} },
+                10 => rsx! { slides::OneshotGameSlide {} },
+                11 => rsx! { slides::CallGameSlide {} },
+                12 => rsx! { slides::BroadcastGameSlide {} },
+                13 => rsx! { slides::WatchGameSlide {} },
+                _ => rsx! { slides::KaySlide {} },
             } }
             slides::Chrome { slide, awake }
             if showing_join() {

@@ -9,6 +9,7 @@ use crate::server::broadcast::BroadcastHandles;
 use crate::server::button::ButtonHandles;
 use crate::server::futures_games::{LoopSelectHandles, SelectHandles, TimerHandles};
 use crate::server::mpsc::MpscHandles;
+use crate::server::room_games::{CallHandles, MutexHandles};
 use crate::server::tickets::Tickets;
 use crate::server::watch::WatchHandles;
 
@@ -17,6 +18,8 @@ pub mod broadcast;
 pub mod button;
 pub mod futures_games;
 pub mod mpsc;
+pub mod room;
+pub mod room_games;
 pub mod tickets;
 pub mod ticking;
 pub mod watch;
@@ -79,6 +82,10 @@ pub struct Planes {
     pub button: GamePlane<ButtonHandles>,
     pub select: GamePlane<SelectHandles>,
     pub loop_select: GamePlane<LoopSelectHandles>,
+    /// The hook (CONCEPT.md §1) and call-and-response (§7): the games
+    /// where who acts, and who leaves, matters.
+    pub mutex: GamePlane<MutexHandles>,
+    pub call: GamePlane<CallHandles>,
     pub mpsc: GamePlane<MpscHandles>,
     pub watch: GamePlane<WatchHandles>,
     pub broadcast: GamePlane<BroadcastHandles>,
@@ -103,6 +110,8 @@ impl AppState {
             button: plane(button::backend),
             select: plane(ticking::backend),
             loop_select: plane(ticking::backend),
+            mutex: plane(room::backend),
+            call: plane(room::backend),
             mpsc: plane(mpsc::backend),
             watch: plane(watch::backend),
             broadcast: plane(broadcast::backend),
@@ -115,7 +124,9 @@ impl AppState {
             Game::Button => &self.button,
             Game::Select => &self.select,
             Game::LoopSelect => &self.loop_select,
+            Game::Mutex => &self.mutex,
             Game::Mpsc => &self.mpsc,
+            Game::Call => &self.call,
             Game::Watch => &self.watch,
             Game::Broadcast => &self.broadcast,
         }
@@ -203,7 +214,12 @@ pub fn game_routes() -> axum::Router<AppState> {
             "/ws/game/loop-select",
             axum::routing::get(futures_games::loop_select_socket),
         )
+        .route(
+            "/ws/game/mutex",
+            axum::routing::get(room_games::mutex_socket),
+        )
         .route("/ws/game/mpsc", axum::routing::get(mpsc::mpsc_socket))
+        .route("/ws/game/call", axum::routing::get(room_games::call_socket))
         .route("/ws/game/watch", axum::routing::get(watch::watch_socket))
         .route(
             "/ws/game/broadcast",

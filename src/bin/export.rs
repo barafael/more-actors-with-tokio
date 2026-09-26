@@ -99,14 +99,20 @@ const STREAMING_INIT: &str = "window.hydrate_queue=[];window.dx_hydrate=(id,data
 /// exporting a page called `slide-7-`.
 const SLIDE_NAMES: [&str; SLIDE_COUNT] = [
     "title",
+    "mutex",
     "timer",
     "button-future",
     "select",
     "loop-select",
     "recipe",
+    "unit-test",
     "mpsc",
-    "watch",
+    "cycle",
+    "oneshot",
+    "call-and-response",
     "broadcast",
+    "watch",
+    "original-oop",
 ];
 
 fn main() {
@@ -121,7 +127,7 @@ fn main() {
         let again = render_deck(i);
         assert_eq!(body, again, "non-deterministic render on slide {i}");
 
-        // the recipe slide carries pre-highlighted code from syntect
+        // the unit-test stepper carries pre-highlighted code from syntect
         let highlighted = body.contains("<span style=\"color:#");
         println!(
             "slide-{i}-{name}.html ({} bytes, syntect spans: {highlighted})",

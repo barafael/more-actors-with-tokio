@@ -22,7 +22,7 @@ warns).
   export immediately.
 - **The pages must work with no wasm at all.** Module scripts and wasm
   fetch fail on `file://`, so a page opened from disk stays plain HTML.
-  Every slide therefore carries baked-in navigation: `‹ prev · n / 9 ·
+  Every slide therefore carries baked-in navigation: `‹ prev · n / 10 ·
   next ›` links plus a tiny inline key handler (arrows, PageUp/Down,
   space). The handler stands down the moment the real client boots —
   the module script's `onload` sets `window.__dx_booted` — because the

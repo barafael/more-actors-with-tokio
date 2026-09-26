@@ -11,12 +11,17 @@ use crate::GameMode;
 
 pub mod broadcast;
 pub mod button;
+pub mod call;
+pub mod cycle;
 pub mod mpsc;
+pub mod mutex;
+pub mod oneshot;
 pub mod palette;
 pub mod qr;
 pub mod select;
 pub mod ticker;
 pub mod timer;
+pub mod unit_test;
 pub mod watch;
 
 #[derive(Clone, Copy)]
@@ -99,4 +104,17 @@ pub fn use_game_connection<E: DeserializeOwned>(
         status,
         mode,
     }
+}
+
+/// Whole seconds a wait has lasted by now.
+///
+/// `for_ms` is how long it had lasted when its snapshot was taken, and
+/// `received_at` is when that snapshot reached this client (`now_ms`). A
+/// duration plus a local receipt time, never a remote instant: the server's
+/// monotonic clock and this browser's do not share an epoch. Unbounded by
+/// design — nothing times out a parked `lock()` or `send()`.
+pub fn waited_s(for_ms: f64, received_at: f64) -> u64 {
+    ((for_ms + crate::sim::now_ms() - received_at) / 1000.0)
+        .floor()
+        .max(0.0) as u64
 }

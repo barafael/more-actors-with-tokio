@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-pub const SLIDE_COUNT: usize = 9;
+pub const SLIDE_COUNT: usize = 15;
 
 pub const MPSC_CAPACITY: usize = 5;
 
@@ -85,7 +85,9 @@ pub enum Game {
     Button,
     Select,
     LoopSelect,
+    Mutex,
     Mpsc,
+    Call,
     Watch,
     Broadcast,
 }
@@ -578,6 +580,139 @@ pub struct LoopSelectSnapshot {
     /// Clearing the tape does not reset this: `SelectWinner.round` is the
     /// client's list key and must never be reused.
     pub rounds: u64,
+}
+
+// ---- mutex: the hook ----
+
+/// One task in the mutex game: a phone in the talk, or one of the local
+/// player's three tasks in the export.
+///
+/// `for_ms` is how long the task has been in its current state *as of the
+/// snapshot*: waiting on `lock()` for a waiter, holding the guard for the
+/// holder. A duration rather than an instant, because the server's clock
+/// and a phone's clock do not share an epoch; the client adds the time
+/// since the snapshot arrived.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct MutexTask {
+    pub task: u64,
+    pub owner: u64,
+    pub for_ms: f64,
+}
+
+/// `Arc<Mutex<u64>>`, shared by the whole room.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct MutexSnapshot {
+    /// The protected value: only the guard's holder may change it.
+    pub value: u64,
+    pub holder: Option<MutexTask>,
+    /// Parked in `lock().await`, in the order they will acquire.
+    pub waiters: Vec<MutexTask>,
+    /// Present, and neither holding nor waiting.
+    pub idle: Vec<MutexTask>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MutexWire {
+    /// `let guard = mutex.lock().await;`
+    Lock,
+    /// `*guard += 1;` — only while holding the guard.
+    Increment,
+    /// `drop(guard);`
+    Unlock,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum MutexEvent {
+    Hello { conn: u64 },
+    Snapshot { state: MutexSnapshot },
+}
+
+// ---- call and response: mpsc + oneshot ----
+
+/// How many requests the actor's inbox buffers before a requester parks.
+pub const CALL_CAPACITY: usize = 4;
+
+/// One `GetUniqueId { callback }` message. `listening` is false once the
+/// requester dropped its `oneshot::Receiver`: the callback still travels,
+/// but a send on it will fail.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CallRequest {
+    pub req: u64,
+    pub task: u64,
+    pub listening: bool,
+}
+
+/// Where one requester's `get_unique_id(&tx).await` stands.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CallPhase {
+    #[default]
+    Idle,
+    /// `send().await` parked on the full inbox.
+    Sending,
+    /// Sent; awaiting the oneshot receiver.
+    Awaiting,
+    /// The reply arrived.
+    Got(u32),
+    /// The actor dropped the callback: the receiver yields `RecvError`.
+    Closed,
+    /// The requester dropped its receiver and stopped waiting.
+    GaveUp,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct CallTask {
+    pub task: u64,
+    pub owner: u64,
+    pub phase: CallPhase,
+    /// How long the current request has been outstanding, as of the
+    /// snapshot. Zero unless `Sending` or `Awaiting`.
+    pub for_ms: f64,
+}
+
+/// What the actor's last use of a callback yielded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CallOutcome {
+    /// `callback.send(id)` returned `Ok(())`.
+    Replied { task: u64, id: u32 },
+    /// `callback.send(id)` returned `Err(id)`: the receiver was dropped.
+    Unheard { task: u64, id: u32 },
+    /// The callback was dropped unused.
+    Dropped { task: u64 },
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct CallSnapshot {
+    pub capacity: usize,
+    /// The actor's state: the id the next reply will carry.
+    pub next_id: u32,
+    /// The inbox, oldest first.
+    pub queue: Vec<CallRequest>,
+    /// Sends parked on the full inbox, in wake order.
+    pub parked: Vec<CallRequest>,
+    /// The message the actor has received and not yet answered.
+    pub in_hand: Option<CallRequest>,
+    pub tasks: Vec<CallTask>,
+    pub last: Option<CallOutcome>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CallWire {
+    /// A requester: `get_unique_id(&tx).await`, then await the reply.
+    Request,
+    /// A requester: drop the receiver (or the parked send) and stop waiting.
+    GiveUp,
+    /// The actor: `rx.recv().await` one message into hand.
+    Recv,
+    /// The actor: `callback.send(self.next_id)`, then `next_id += 1`.
+    Reply,
+    /// The actor: drop the callback without answering.
+    DropCallback,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum CallEvent {
+    Hello { conn: u64 },
+    Snapshot { state: CallSnapshot },
 }
 
 // ---- tickets and the presenter slot ----
