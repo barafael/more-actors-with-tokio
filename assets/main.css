@@ -2390,3 +2390,277 @@ strong {
         width: 90%;
     }
 }
+
+/* ---- speedd: an actor architecture, stepped by hand ----
+   Nodes sit at percent positions on the board (games/speedd/layout.rs),
+   centred on their point; edges are one svg under them; flights fly from
+   one node's point to another's over one keyframe driven by variables. */
+
+.speedd-game {
+    height: 66vh;
+    display: flex;
+    flex-direction: column;
+    padding: 44px 10px 48px;
+}
+
+.sd-board {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+}
+
+.sd-edges {
+    z-index: 1;
+}
+
+.sd-edge {
+    stroke: rgba(51, 51, 51, 0.28);
+    stroke-width: 1.5;
+    vector-effect: non-scaling-stroke;
+}
+
+.sd-edge.dashed {
+    stroke-dasharray: 5 4;
+    stroke: color-mix(in srgb, var(--color-blue) 45%, transparent);
+}
+
+/* actors: cameras, the Collector, dispatchers */
+
+.sd-actor {
+    position: absolute;
+    z-index: 5;
+    transform: translate(-50%, -50%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    padding: 5px 8px;
+    border: 2px solid var(--ink);
+    background: #fffdf6;
+    color: var(--ink);
+    font: var(--t-label) var(--font-label);
+    text-align: center;
+    transition: border-color 0.2s ease, background-color 0.2s ease;
+}
+
+button.sd-actor {
+    cursor: pointer;
+}
+
+button.sd-actor:hover {
+    background: color-mix(in srgb, var(--color-highlight) 8%, #fff);
+}
+
+.sd-actor.held {
+    border-color: var(--color-highlight);
+    background: color-mix(in srgb, var(--color-highlight) 12%, #fff);
+}
+
+.sd-actor.running {
+    border-color: var(--color-green);
+}
+
+.sd-actor.parked {
+    border-style: dashed;
+    border-color: var(--color-red);
+    background: color-mix(in srgb, var(--color-red) 8%, #fff);
+}
+
+.sd-actor-head {
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.sd-doing {
+    font: 400 var(--t-state) var(--font-hand);
+    white-space: nowrap;
+}
+
+.sd-camera {
+    width: 15%;
+    /* never narrower than its three car chips */
+    min-width: max-content;
+    padding: 3px 5px;
+}
+
+.sd-camera .sd-actor-head {
+    font-size: 0.85em;
+    font-weight: 400;
+}
+
+.sd-cars {
+    display: flex;
+    gap: 3px;
+}
+
+.sd-car {
+    padding: 1px 5px;
+    border: 2px solid var(--c);
+    background: color-mix(in srgb, var(--c) 22%, #fff);
+    font: 700 var(--t-label) var(--font-label);
+    color: var(--ink);
+    cursor: pointer;
+}
+
+.sd-car:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+
+.sd-collector {
+    width: 19%;
+    min-height: 20%;
+    justify-content: flex-start;
+    border-width: 3px;
+}
+
+.sd-records {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    color: var(--color-dimmed);
+}
+
+.sd-dispatcher {
+    width: 13%;
+}
+
+/* channels: a title, their slots, and whatever is parked on them */
+
+.sd-channel {
+    position: absolute;
+    z-index: 5;
+    transform: translate(-50%, -50%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    padding: 4px 6px;
+    background: rgba(250, 245, 232, 0.92);
+    border: 1px dashed rgba(51, 51, 51, 0.35);
+    font: var(--t-label) var(--font-label);
+}
+
+.sd-channel.full {
+    border: 2px solid var(--color-red);
+}
+
+.sd-channel.sd-uncreated {
+    opacity: 0.6;
+}
+
+.sd-channel-title {
+    font-weight: 700;
+    color: var(--color-dimmed);
+    white-space: nowrap;
+}
+
+.sd-slots,
+.sd-parked {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.sd-slot {
+    min-width: 3.6em;
+    min-height: 1.7em;
+    padding: 1px 4px;
+    border: 2px solid #333;
+    background: #fff;
+    font-weight: 700;
+    white-space: nowrap;
+    text-align: center;
+}
+
+.sd-slot.filled {
+    border-color: var(--c);
+    background: color-mix(in srgb, var(--c) 20%, #fff);
+}
+
+.sd-slot.parked {
+    border-style: dashed;
+    border-color: var(--c);
+    background: transparent;
+}
+
+.sd-fill {
+    margin-left: 2px;
+    color: var(--color-dimmed);
+}
+
+.sd-channel.full .sd-fill {
+    color: var(--color-red);
+    font-weight: 700;
+}
+
+.sd-hint {
+    font: 400 var(--t-label) var(--font-hand);
+    color: var(--color-dimmed);
+}
+
+/* a message in the air: from one node's point to another's */
+
+.sd-flight {
+    position: absolute;
+    z-index: 20;
+    left: var(--fx);
+    top: var(--fy);
+    transform: translate(-50%, -50%);
+    padding: 1px 6px;
+    border: 2px solid var(--c);
+    background: color-mix(in srgb, var(--c) 30%, #fff);
+    font: 700 var(--t-label) var(--font-label);
+    color: var(--ink);
+    white-space: nowrap;
+    pointer-events: none;
+    box-shadow: 0 2px 6px rgba(51, 51, 51, 0.25);
+    animation: sd-fly 0.6s ease-in-out var(--delay, 0s) both;
+}
+
+.sd-flight.sub,
+.sd-flight.reply {
+    border-radius: 999px;
+}
+
+@keyframes sd-fly {
+    from {
+        left: var(--fx);
+        top: var(--fy);
+    }
+    to {
+        left: var(--tx);
+        top: var(--ty);
+    }
+}
+
+.sd-note {
+    display: flex;
+    justify-content: center;
+    margin-top: 6px;
+}
+
+.sd-note .note-pill {
+    white-space: normal;
+    text-align: center;
+    max-width: 90%;
+}
+
+/* Phones: the board keeps its desktop proportions and scrolls sideways;
+   a graph this wide cannot be restacked without losing its edges. */
+@media (max-width: 700px) {
+    .speedd-game {
+        height: 80vh;
+        overflow-x: auto;
+    }
+
+    .sd-board {
+        min-width: 980px;
+    }
+
+    /* the caption wraps into the narration on a phone; the narration is
+       the part worth keeping */
+    .speedd-game .game-footer .dim {
+        display: none;
+    }
+}

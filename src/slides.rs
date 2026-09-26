@@ -8,6 +8,7 @@ use crate::games::mpsc::MpscGame;
 use crate::games::mutex::MutexGame;
 use crate::games::oneshot::OneshotGame;
 use crate::games::select::{LoopSelectGame, SelectGame};
+use crate::games::speedd::SpeeddGame;
 use crate::games::timer::TimerGame;
 use crate::games::unit_test::UnitTestGame;
 use crate::games::watch::WatchGame;
@@ -127,6 +128,19 @@ pub fn CallGameSlide() -> Element {
             h2 { "Call and response" }
             p { class: "dim", "An mpsc message carrying a oneshot callback. You ask, then wait on your receiver. The presenter is the event loop — nobody gets an answer until it gets to them." }
             CallGame {}
+        }
+    }
+}
+
+/// CONCEPT.md §8: channels determine architecture, on a real server — the
+/// Protohackers Speed Daemon, stepped one actor at a time.
+#[component]
+pub fn SpeeddSlide() -> Element {
+    rsx! {
+        div { class: "slide",
+            h2 { "An architecture, by hand" }
+            p { class: "dim", "speedd, the Protohackers speed daemon: click an actor to run one step of its loop." }
+            SpeeddGame {}
         }
     }
 }

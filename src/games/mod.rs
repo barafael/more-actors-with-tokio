@@ -19,6 +19,7 @@ pub mod oneshot;
 pub mod palette;
 pub mod qr;
 pub mod select;
+pub mod speedd;
 pub mod ticker;
 pub mod timer;
 pub mod unit_test;

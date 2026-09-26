@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-pub const SLIDE_COUNT: usize = 15;
+pub const SLIDE_COUNT: usize = 16;
 
 pub const MPSC_CAPACITY: usize = 5;
 

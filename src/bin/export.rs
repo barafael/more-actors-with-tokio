@@ -112,6 +112,7 @@ const SLIDE_NAMES: [&str; SLIDE_COUNT] = [
     "call-and-response",
     "broadcast",
     "watch",
+    "speedd",
     "original-oop",
 ];
 

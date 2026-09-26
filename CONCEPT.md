@@ -29,6 +29,7 @@ Audience-playable minigames for specific concepts.
   - `broadcast` (fan-out, honest lag),
   - `watch` (latest-value config).
 8. Channels determine architecture. Build whiteboard app in steps. *Deferred.*
+  - **Built instead, first**: speedd (Protohackers 6) as a board you step by hand (`src/games/speedd/`). Seven cameras on three roads, the Collector, one mpmc ticket queue per road, five dispatchers `[7] [7] [7,8] [8,9] [9]` — the topology of speedd's own `live-topology.drawio.png`, widened to three roads. Single-player. Nothing advances on its own: clicking an actor runs one iteration of its loop, and what it sent flies along the graph. Every channel shows its fill, so backpressure is watched propagating: a full road queue parks the Collector, then `reporting` fills, then cameras park. Dispatchers start unsubscribed, so the `(road, oneshot)` handshake and tickets queuing with no dispatcher are both part of play. The ticket logic is ported from speedd's `collector.rs`.
 10. **Garnish — OOOP** (*sketched*: the quote and the five-way mapping, no game): Alan Kay; message passing was the point; `Sender<Message>` as a late-bound vtable.
 
 ## The Slide App
@@ -47,6 +48,6 @@ Audience-playable minigames for specific concepts.
 - **Restart** (per game, presenter-only): token cancels → `select!` branch breaks → cleanup → game-ws closes with **4001** → the backend respawns a fresh actor → clients clear local state, retry at 1–2–4 s (games are permanent; restarts are sub-second, so no cap, no lobby).
 - **Whiteboard**: command replay after accept (event sourcing, not periodic snapshots). Other minigames: snapshot after accept.
 - live-topology view of the whiteboard app's real actor graph (games, messages flowing in).
-- possibly other architecture realtime views (protohackers exercise number 6)
+- possibly other architecture realtime views (protohackers exercise number 6) — *built as the speedd board, stepped rather than realtime*
 
 **Porting note**: the existing JS demos have a clean sim/render split — `channel.js` ports to Rust ~1:1 (it's already a state machine); the render layer is rewritten as rsx + signals + rAF, styled from the rhea/live.css tokens. Slide demos stay local-iframed in the repo deck during development, but the final product has none of that.

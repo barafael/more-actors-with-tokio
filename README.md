@@ -16,7 +16,8 @@ src/
   games/        one module per minigame, plus qr.rs, the join code the
                 audience scans. Shared: mutex, button, timer, select, mpsc,
                 call (mpsc + oneshot), watch, broadcast. Single-player even
-                in the talk: unit_test (stepper), cycle (deadlock), oneshot
+                in the talk: unit_test (stepper), cycle (deadlock), oneshot,
+                speedd (an actor architecture stepped by hand)
   server/       one actor per game, supervised, behind axum State;
                 room.rs is the generic actor for games where who acts,
                 and who leaves, matters (mutex, call)

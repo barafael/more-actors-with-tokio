@@ -298,6 +298,7 @@ pub fn Deck(mode: GameMode, initial_slide: usize) -> Element {
                 11 => rsx! { slides::CallGameSlide {} },
                 12 => rsx! { slides::BroadcastGameSlide {} },
                 13 => rsx! { slides::WatchGameSlide {} },
+                14 => rsx! { slides::SpeeddSlide {} },
                 _ => rsx! { slides::KaySlide {} },
             } }
             slides::Chrome { slide, awake }
