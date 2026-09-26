@@ -132,7 +132,3 @@ Deferred, per [CONCEPT.md](CONCEPT.md): the watchdog actor, the whiteboard
 app, natural shutdown across a DAG, and the recipe tooling (snippet
 extraction, jump-to-VS-Code). The OOOP closer is a sketch. Code on slides is
 removed for now; only the unit-test stepper shows any.
-
-In a debug build the client always dials `127.0.0.1:8080` (see `ws_url`),
-so every browser is a loopback presenter. Rehearse player roles with
-`dx serve --release`.

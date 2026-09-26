@@ -141,18 +141,18 @@ pub fn spawn_ws_loop(_path: &'static str, on_event: impl FnMut(WsEvent) + 'stati
 
 #[cfg(target_arch = "wasm32")]
 fn ws_url(path: &str) -> String {
-    let base = if cfg!(debug_assertions) {
-        format!("ws://127.0.0.1:8080{path}")
+    // Always the page's own host, debug builds included. A fixed dev
+    // address made every debug client a loopback connection — and so a
+    // presenter — which hid the player role from anyone rehearsing with a
+    // phone; `dx serve` proxies the sockets on the page's port anyway.
+    let location = web_sys::window().expect("window").location();
+    let scheme = if location.protocol().is_ok_and(|p| p == "https:") {
+        "wss"
     } else {
-        let location = web_sys::window().expect("window").location();
-        let scheme = if location.protocol().is_ok_and(|p| p == "https:") {
-            "wss"
-        } else {
-            "ws"
-        };
-        let host = location.host().unwrap_or_default();
-        format!("{scheme}://{host}{path}")
+        "ws"
     };
+    let host = location.host().unwrap_or_default();
+    let base = format!("{scheme}://{host}{path}");
 
     // Every socket presents the same credentials the page was opened with,
     // so the server can rule on them once per connection. Without this a
