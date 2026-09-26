@@ -682,8 +682,15 @@ mod handle_tests {
         while !tx.shared.lock.lock().is_waiting(reader_slot) {
             thread::yield_now();
         }
-        tx.send('b').expect("receiver alive");
-        tx.send('c').expect("receiver alive");
+        // Both sends under one hold of the lock, as `Sender::send` does
+        // each: sent one at a time, the reader can wake on 'b' and read it
+        // before 'c' lands, and then it has not lagged at all.
+        {
+            let mut core = tx.shared.lock.lock();
+            core.send('b').expect("receiver alive");
+            core.send('c').expect("receiver alive");
+        }
+        tx.shared.lock.notify_all();
         let (first, second) = reader.join().expect("reader thread");
         assert_eq!(first, Ok('a'));
         assert_eq!(second, Err(RecvError::Lagged(1)));
