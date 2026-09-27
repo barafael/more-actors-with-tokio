@@ -50,8 +50,13 @@ body {
 
 /* ---- slide = marp section ---- */
 
+/* A slide is a column: heading, lede, and whatever is left for the
+   diagram, so the box starts and ends in the same place on every slide
+   however long the lede is. */
 .slide {
-    min-height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    height: 100dvh;
     padding: 8vh 5.47vw 10vh;
     overflow: hidden;
     background-color: var(--color-background);
@@ -106,6 +111,12 @@ strong {
 
 .dim {
     color: var(--color-dimmed);
+}
+
+/* the lede reserves two lines, so a one-line one does not move the box */
+.slide > p.dim {
+    min-height: 2.7em;
+    flex: none;
 }
 
 /* ---- chrome (presenter nav) ---- */
@@ -205,7 +216,8 @@ strong {
     margin-top: 0.6rem;
     border: 2px solid rgba(51, 51, 51, 0.25);
     border-radius: 0;
-    height: 52vh;
+    /* fills the slide below the lede; a floor for short windows */
+    flex: 1;
     min-height: 300px;
     container-type: size;
     background-color: var(--color-background);
@@ -1618,7 +1630,6 @@ strong {
    projector down to a laptop. */
 
 .unit-test-game {
-    height: 74vh;
     display: grid;
     grid-template-rows: minmax(0, 1fr) auto auto;
     gap: 8px;
@@ -1944,7 +1955,6 @@ strong {
 .call-game,
 .oneshot-game,
 .cycle-game {
-    height: 60vh;
     display: flex;
     flex-direction: column;
     padding: 46px 14px 52px;
@@ -2376,12 +2386,21 @@ strong {
 }
 
 /* Phones: every stage stacks, and the games grow as tall as they need. */
+/* Phones scroll: the slide grows with its game instead of clipping it. */
 @media (max-width: 700px) {
+    .slide {
+        height: auto;
+        min-height: 100dvh;
+    }
+
+    .diagram {
+        flex: none;
+    }
+
     .mutex-game,
     .call-game,
     .oneshot-game,
     .cycle-game {
-        height: auto;
         min-height: 60vh;
         container-type: inline-size;
     }
@@ -2402,7 +2421,6 @@ strong {
    one node's point to another's over one keyframe driven by variables. */
 
 .board-game {
-    height: 66vh;
     display: flex;
     flex-direction: column;
     padding: 44px 10px 48px;
@@ -2679,7 +2697,7 @@ button.bd-actor:hover {
    a graph this wide cannot be restacked without losing its edges. */
 @media (max-width: 700px) {
     .board-game {
-        height: 80vh;
+        min-height: 80vh;
         overflow-x: auto;
     }
 
@@ -2785,10 +2803,6 @@ button.bd-actor:hover {
 
 /* ---- watchdog: the loop-select with an inbox and a way out ---- */
 
-.watchdog-game {
-    height: 56vh;
-}
-
 .wd-owner {
     width: 17%;
     gap: 6px;
@@ -2853,10 +2867,6 @@ button.bd-actor:hover {
 
 /* ---- pipeline: halres-downloader, stepped by hand ---- */
 
-.pipeline-game {
-    height: 60vh;
-}
-
 .pl-reader,
 .pl-collector {
     width: 14%;
@@ -2909,10 +2919,6 @@ button.bd-actor:hover {
 }
 
 /* ---- FuturesUnordered: many futures, one task ---- */
-
-.unordered-game {
-    height: 56vh;
-}
 
 .fu-task {
     width: 20%;

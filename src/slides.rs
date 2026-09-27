@@ -87,7 +87,7 @@ pub fn MutexGameSlide() -> Element {
     rsx! {
         div { class: "slide",
             h2 { "Arc<Mutex<T>>" }
-            p { class: "dim", "Safe: only the guard's holder can touch the value. That is all it buys. Nobody else can do anything but wait, for as long as the holder likes." }
+            p { class: "dim", "Safe: only the guard's holder can touch the value. That is all it buys; everyone else waits as long as the holder likes." }
             MutexGame {}
         }
     }
@@ -100,7 +100,7 @@ pub fn TimerGameSlide() -> Element {
     rsx! {
         div { class: "slide",
             h2 { "A future that waits" }
-            p { class: "dim", "Awaiting it yields nothing until the seconds reach a multiple of ten — then it yields how long it waited. Nobody in this room makes that happen." }
+            p { class: "dim", "It yields nothing until the seconds reach a multiple of ten, then how long it waited. Nobody in this room makes that happen." }
             TimerGame {}
         }
     }
@@ -112,7 +112,7 @@ pub fn SelectGameSlide() -> Element {
     rsx! {
         div { class: "slide",
             h2 { "select!" }
-            p { class: "dim", "Two futures, awaited together. The first to complete wins and yields its value; the other is dropped mid-flight — never awaited, never resumed." }
+            p { class: "dim", "Two futures, awaited together. The first to complete wins; the other is dropped mid-flight, never resumed." }
             SelectGame {}
         }
     }
@@ -125,7 +125,7 @@ pub fn LoopSelectGameSlide() -> Element {
     rsx! {
         div { class: "slide",
             h2 { "The loop around the select" }
-            p { class: "dim", "Take the winner, go around again. A loop, a select, and state nothing outside the loop can reach — everything an actor is, except an inbox." }
+            p { class: "dim", "Take the winner, go around again. A loop, a select, and state nothing outside can reach: an actor, minus the inbox." }
             LoopSelectGame {}
         }
     }
@@ -159,7 +159,7 @@ pub fn CycleGameSlide() -> Element {
     rsx! {
         div { class: "slide",
             h2 { "Two actors, one cycle" }
-            p { class: "dim", "A sends to B, B sends to A, both inboxes bounded. Backpressure is what makes it seize: fill both, and each waits for the other to receive. Keep the topology a DAG." }
+            p { class: "dim", "A sends to B, B sends to A, both inboxes bounded. Fill both and each waits for the other to receive. Keep the topology a DAG." }
             CycleGame {}
         }
     }
@@ -170,7 +170,7 @@ pub fn OneshotGameSlide() -> Element {
     rsx! {
         div { class: "slide",
             h2 { "The oneshot channel" }
-            p { class: "dim", "One value, once. Every call takes its handle by value — send and await can each happen exactly once, and dropping either half is how the other finds out." }
+            p { class: "dim", "One value, once. Every call takes its handle by value, and dropping either half is how the other finds out." }
             OneshotGame {}
         }
     }
@@ -181,7 +181,7 @@ pub fn CallGameSlide() -> Element {
     rsx! {
         div { class: "slide",
             h2 { "Call and response" }
-            p { class: "dim", "An mpsc message carrying a oneshot callback. You ask, then wait on your receiver. The presenter is the event loop — nobody gets an answer until it gets to them." }
+            p { class: "dim", "An mpsc message carrying a oneshot callback. You ask, then wait on your receiver; the presenter is the event loop that answers." }
             CallGame {}
         }
     }
@@ -304,7 +304,7 @@ pub fn BroadcastGameSlide() -> Element {
     rsx! {
         div { class: "slide",
             h2 { "The broadcast channel" }
-            p { class: "dim", "Sending never blocks: a full buffer evicts its oldest value. A new receiver starts at the tail — it never sees history. Fall behind and your next receive yields Lagged(n)." }
+            p { class: "dim", "Sending never blocks: a full buffer evicts its oldest value. Fall behind and your next receive yields Lagged(n)." }
             BroadcastGame {}
         }
     }
@@ -335,6 +335,7 @@ pub fn UnitTestSlide() -> Element {
     rsx! {
         div { class: "slide",
             h2 { "A test with nothing to race" }
+            p { class: "dim", "The article's unit test, one line at a time. Every message is queued before the loop runs, so there is nothing to race." }
             UnitTestGame {}
         }
     }
