@@ -1,0 +1,7 @@
+# Text files are stored with LF endings, whatever the editor writes.
+# Binaries are detected and left alone; the explicit ones are the
+# generated and bundled assets, marked so no heuristic can touch them.
+* text=auto eol=lf
+*.ico binary
+*.wasm binary
+*.png binary
