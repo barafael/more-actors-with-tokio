@@ -17,7 +17,8 @@ src/
                 audience scans. Shared: mutex, button, timer, select, mpsc,
                 call (mpsc + oneshot), watch, broadcast. Single-player even
                 in the talk: unit_test (stepper), cycle (deadlock), oneshot,
-                speedd (an actor architecture stepped by hand)
+                watchdog (live), budget chat, futures-unordered, pipeline and speedd (actor architectures
+                stepped by hand; board.rs is what the boards share)
   server/       one actor per game, supervised, behind axum State;
                 room.rs is the generic actor for games where who acts,
                 and who leaves, matters (mutex, call)
@@ -129,7 +130,7 @@ URL — someone reading a neighbour's screen could take their seat. The worst
 case is one audience member playing as another, which is the right amount
 of security for a conference game.
 
-Deferred, per [CONCEPT.md](CONCEPT.md): the watchdog actor, the whiteboard
-app, natural shutdown across a DAG, and the recipe tooling (snippet
+Deferred, per [CONCEPT.md](CONCEPT.md): the whiteboard
+app and the recipe tooling (snippet
 extraction, jump-to-VS-Code). The OOOP closer is a sketch. Code on slides is
 removed for now; only the unit-test stepper shows any.

@@ -9,21 +9,27 @@ use serde::Serialize;
 use crate::ws_client::{SocketHandle, WsEvent};
 use crate::GameMode;
 
+pub mod board;
 pub mod broadcast;
 pub mod button;
 pub mod call;
+pub mod chat;
 pub mod cycle;
 pub mod mpsc;
 pub mod mutex;
 pub mod oneshot;
 pub mod palette;
+pub mod pipeline;
 pub mod qr;
 pub mod select;
 pub mod speedd;
+pub mod step;
 pub mod ticker;
 pub mod timer;
 pub mod unit_test;
+pub mod unordered;
 pub mod watch;
+pub mod watchdog;
 
 #[derive(Clone, Copy)]
 pub struct GameConnection {

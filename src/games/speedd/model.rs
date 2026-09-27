@@ -194,21 +194,8 @@ pub struct Hop {
     pub leg: u8,
 }
 
-/// What one click did.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Step {
-    pub hops: Vec<Hop>,
-    pub note: String,
-}
-
-impl Step {
-    fn note(note: impl Into<String>) -> Self {
-        Self {
-            hops: Vec::new(),
-            note: note.into(),
-        }
-    }
-}
+/// What one click did: the hops it made and what to say about it.
+pub type Step = crate::games::step::Step<Hop>;
 
 /// Index of `road` in [`ROADS`].
 pub fn road_index(road: Road) -> usize {

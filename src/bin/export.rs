@@ -5,7 +5,7 @@
 //! components, same sims, no server.
 use dioxus::prelude::*;
 
-use more_actors_with_tokio::protocol::SLIDE_COUNT;
+use more_actors_with_tokio::slides::SLIDE_NAMES;
 use more_actors_with_tokio::{Deck, DeckProps, GameMode};
 
 fn render_deck(index: usize) -> String {
@@ -94,31 +94,10 @@ fn page(title: &str, body: &str, nav: Option<&Nav>) -> String {
 /// machinery expects a streaming queue to exist before the client boots.
 const STREAMING_INIT: &str = "window.hydrate_queue=[];window.dx_hydrate=(id,data,debug_types,debug_locations)=>{let decoded=atob(data),bytes=Uint8Array.from(decoded,(c)=>c.charCodeAt(0));if(window.hydration_callback)window.hydration_callback(id,bytes,debug_types,debug_locations);else window.hydrate_queue.push([id,bytes,debug_types,debug_locations])};";
 
-/// One name per slide, in deck order. The array is sized by `SLIDE_COUNT`,
-/// so adding a slide without naming it fails to compile rather than
-/// exporting a page called `slide-7-`.
-const SLIDE_NAMES: [&str; SLIDE_COUNT] = [
-    "title",
-    "mutex",
-    "timer",
-    "button-future",
-    "select",
-    "loop-select",
-    "recipe",
-    "unit-test",
-    "mpsc",
-    "cycle",
-    "oneshot",
-    "call-and-response",
-    "broadcast",
-    "watch",
-    "speedd",
-    "original-oop",
-];
-
 fn main() {
     let out_dir = std::path::Path::new("export");
     std::fs::create_dir_all(out_dir).expect("create export dir");
+    prune_stale_pages(out_dir);
 
     let mut index_links = String::new();
     for (i, name) in SLIDE_NAMES.iter().enumerate() {
@@ -194,4 +173,25 @@ fn copy_dir(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()>
         }
     }
     Ok(())
+}
+
+/// Remove slide pages the deck no longer has: inserting a slide renumbers
+/// every page after it, and the old files would otherwise linger beside the
+/// new ones.
+fn prune_stale_pages(out_dir: &std::path::Path) {
+    let current: Vec<String> = SLIDE_NAMES
+        .iter()
+        .enumerate()
+        .map(|(i, name)| format!("slide-{i}-{name}.html"))
+        .collect();
+    let Ok(entries) = std::fs::read_dir(out_dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.starts_with("slide-") && name.ends_with(".html") && !current.contains(&name) {
+            std::fs::remove_file(entry.path()).expect("remove a stale slide page");
+            println!("removed stale {name}");
+        }
+    }
 }

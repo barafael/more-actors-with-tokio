@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
-pub const SLIDE_COUNT: usize = 16;
+/// How many slides the deck has: `slides::SLIDE_NAMES` is the one list.
+pub const SLIDE_COUNT: usize = crate::slides::SLIDE_NAMES.len();
 
 pub const MPSC_CAPACITY: usize = 5;
 

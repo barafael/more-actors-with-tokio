@@ -3,16 +3,71 @@ use dioxus::prelude::*;
 use crate::games::broadcast::BroadcastGame;
 use crate::games::button::ButtonGame;
 use crate::games::call::CallGame;
+use crate::games::chat::ChatGame;
 use crate::games::cycle::CycleGame;
 use crate::games::mpsc::MpscGame;
 use crate::games::mutex::MutexGame;
 use crate::games::oneshot::OneshotGame;
+use crate::games::pipeline::PipelineGame;
 use crate::games::select::{LoopSelectGame, SelectGame};
 use crate::games::speedd::SpeeddGame;
 use crate::games::timer::TimerGame;
 use crate::games::unit_test::UnitTestGame;
+use crate::games::unordered::UnorderedGame;
 use crate::games::watch::WatchGame;
+use crate::games::watchdog::WatchdogGame;
 use crate::{protocol::SLIDE_COUNT, AppCtx, GameMode};
+
+/// Declares the deck: each slide's export name and component, in order.
+/// Expands to the names list and the index-to-slide function, so adding or
+/// moving a slide is one line here — the deck, the slide count and the
+/// export all follow.
+macro_rules! deck {
+    ($(($name:literal, $slide:ident)),* $(,)?) => {
+        /// Every slide's name, in deck order: the export's file names.
+        pub const SLIDE_NAMES: &[&str] = &[$($name),*];
+
+        /// The slide at `index` in the deck.
+        pub fn slide(index: usize) -> Element {
+            let mut position = 0;
+            $(
+                if index == position {
+                    return rsx! { $slide {} };
+                }
+                position += 1;
+            )*
+            let _ = position;
+            rsx! {}
+        }
+    };
+}
+
+// CONCEPT.md's arc: the mutex as the problem, then futures (a timer, real
+// I/O, a race, the race in a loop, the loop given an actor), which makes
+// the recipe a summary rather than an introduction; then the channels that
+// connect actors, in the plan's order; then architectures; then Kay.
+deck! {
+    ("title", Title),
+    ("mutex", MutexGameSlide),
+    ("timer", TimerGameSlide),
+    ("button-future", ButtonGameSlide),
+    ("select", SelectGameSlide),
+    ("loop-select", LoopSelectGameSlide),
+    ("watchdog", WatchdogSlide),
+    ("recipe", Recipe),
+    ("unit-test", UnitTestSlide),
+    ("mpsc", MpscGameSlide),
+    ("cycle", CycleGameSlide),
+    ("oneshot", OneshotGameSlide),
+    ("call-and-response", CallGameSlide),
+    ("broadcast", BroadcastGameSlide),
+    ("watch", WatchGameSlide),
+    ("budget-chat", ChatSlide),
+    ("futures-unordered", UnorderedSlide),
+    ("pipeline", PipelineSlide),
+    ("speedd", SpeeddSlide),
+    ("original-oop", KaySlide),
+}
 
 #[component]
 pub fn Title() -> Element {
@@ -128,6 +183,57 @@ pub fn CallGameSlide() -> Element {
             h2 { "Call and response" }
             p { class: "dim", "An mpsc message carrying a oneshot callback. You ask, then wait on your receiver. The presenter is the event loop — nobody gets an answer until it gets to them." }
             CallGame {}
+        }
+    }
+}
+
+/// CONCEPT.md §5: the loop-select needs somewhere to run. The watchdog
+/// crate's actor is exactly that loop, with an inbox and a way out.
+#[component]
+pub fn WatchdogSlide() -> Element {
+    rsx! {
+        div { class: "slide",
+            h2 { "The loop gets an actor" }
+            p { class: "dim", "A watchdog: the same select!, now owning an inbox and a oneshot. Feed it, or it fires." }
+            WatchdogGame {}
+        }
+    }
+}
+
+/// Budget Chat without the lock: a room actor owns the member list that
+/// the original kept in an Arc<Mutex<HashMap>>.
+#[component]
+pub fn ChatSlide() -> Element {
+    rsx! {
+        div { class: "slide",
+            h2 { "A chat room with an owner" }
+            p { class: "dim", "Budget Chat, where a room actor owns the member list instead of a lock." }
+            ChatGame {}
+        }
+    }
+}
+
+/// FuturesUnordered on its own, before the pipeline puts one in each stage.
+#[component]
+pub fn UnorderedSlide() -> Element {
+    rsx! {
+        div { class: "slide",
+            h2 { "Many futures, one task" }
+            p { class: "dim", "FuturesUnordered: push futures in, and next() hands back whichever finishes first." }
+            UnorderedGame {}
+        }
+    }
+}
+
+/// A pipeline: halres-downloader's stages, and the shutdown that walks down
+/// them once the reader drops its sender.
+#[component]
+pub fn PipelineSlide() -> Element {
+    rsx! {
+        div { class: "slide",
+            h2 { "A pipeline, and how it stops" }
+            p { class: "dim", "halres-downloader: each stage takes work while it has room and passes on whatever finishes first." }
+            PipelineGame {}
         }
     }
 }

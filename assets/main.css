@@ -1416,13 +1416,18 @@ strong {
    that these are two *alternatives*, not two stages of a pipeline. */
 
 .race {
+    display: flex;
+    align-items: center;
+    gap: 1.2rem;
+}
+
+/* the select games centre their race on the diagram */
+.select-game .race,
+.loop-select-game .race {
     position: absolute;
     top: 50%;
     left: 50%;
     transform: translate(-50%, -60%);
-    display: flex;
-    align-items: center;
-    gap: 1.2rem;
     z-index: 5;
 }
 
@@ -2396,37 +2401,37 @@ strong {
    centred on their point; edges are one svg under them; flights fly from
    one node's point to another's over one keyframe driven by variables. */
 
-.speedd-game {
+.board-game {
     height: 66vh;
     display: flex;
     flex-direction: column;
     padding: 44px 10px 48px;
 }
 
-.sd-board {
+.bd-board {
     position: relative;
     flex: 1;
     min-height: 0;
 }
 
-.sd-edges {
+.bd-edges {
     z-index: 1;
 }
 
-.sd-edge {
+.bd-edge {
     stroke: rgba(51, 51, 51, 0.28);
     stroke-width: 1.5;
     vector-effect: non-scaling-stroke;
 }
 
-.sd-edge.dashed {
+.bd-edge.dashed {
     stroke-dasharray: 5 4;
     stroke: color-mix(in srgb, var(--color-blue) 45%, transparent);
 }
 
 /* actors: cameras, the Collector, dispatchers */
 
-.sd-actor {
+.bd-actor {
     position: absolute;
     z-index: 5;
     transform: translate(-50%, -50%);
@@ -2443,35 +2448,35 @@ strong {
     transition: border-color 0.2s ease, background-color 0.2s ease;
 }
 
-button.sd-actor {
+button.bd-actor {
     cursor: pointer;
 }
 
-button.sd-actor:hover {
+button.bd-actor:hover {
     background: color-mix(in srgb, var(--color-highlight) 8%, #fff);
 }
 
-.sd-actor.held {
+.bd-actor.held {
     border-color: var(--color-highlight);
     background: color-mix(in srgb, var(--color-highlight) 12%, #fff);
 }
 
-.sd-actor.running {
+.bd-actor.running {
     border-color: var(--color-green);
 }
 
-.sd-actor.parked {
+.bd-actor.parked {
     border-style: dashed;
     border-color: var(--color-red);
     background: color-mix(in srgb, var(--color-red) 8%, #fff);
 }
 
-.sd-actor-head {
+.bd-head {
     font-weight: 700;
     white-space: nowrap;
 }
 
-.sd-doing {
+.bd-doing {
     font: 400 var(--t-state) var(--font-hand);
     white-space: nowrap;
 }
@@ -2483,7 +2488,7 @@ button.sd-actor:hover {
     padding: 3px 5px;
 }
 
-.sd-camera .sd-actor-head {
+.sd-camera .bd-head {
     font-size: 0.85em;
     font-weight: 400;
 }
@@ -2491,20 +2496,6 @@ button.sd-actor:hover {
 .sd-cars {
     display: flex;
     gap: 3px;
-}
-
-.sd-car {
-    padding: 1px 5px;
-    border: 2px solid var(--c);
-    background: color-mix(in srgb, var(--c) 22%, #fff);
-    font: 700 var(--t-label) var(--font-label);
-    color: var(--ink);
-    cursor: pointer;
-}
-
-.sd-car:disabled {
-    opacity: 0.4;
-    cursor: default;
 }
 
 .sd-collector {
@@ -2527,7 +2518,7 @@ button.sd-actor:hover {
 
 /* channels: a title, their slots, and whatever is parked on them */
 
-.sd-channel {
+.bd-channel {
     position: absolute;
     z-index: 5;
     transform: translate(-50%, -50%);
@@ -2541,28 +2532,28 @@ button.sd-actor:hover {
     font: var(--t-label) var(--font-label);
 }
 
-.sd-channel.full {
+.bd-channel.full {
     border: 2px solid var(--color-red);
 }
 
-.sd-channel.sd-uncreated {
+.bd-channel.bd-uncreated {
     opacity: 0.6;
 }
 
-.sd-channel-title {
+.bd-channel-title {
     font-weight: 700;
     color: var(--color-dimmed);
     white-space: nowrap;
 }
 
-.sd-slots,
-.sd-parked {
+.bd-slots,
+.bd-parked {
     display: flex;
     align-items: center;
     gap: 4px;
 }
 
-.sd-slot {
+.bd-slot {
     min-width: 3.6em;
     min-height: 1.7em;
     padding: 1px 4px;
@@ -2573,35 +2564,73 @@ button.sd-actor:hover {
     text-align: center;
 }
 
-.sd-slot.filled {
+.bd-slot.filled {
     border-color: var(--c);
     background: color-mix(in srgb, var(--c) 20%, #fff);
 }
 
-.sd-slot.parked {
+.bd-slot.parked {
     border-style: dashed;
     border-color: var(--c);
     background: transparent;
 }
 
-.sd-fill {
+.bd-fill {
     margin-left: 2px;
     color: var(--color-dimmed);
 }
 
-.sd-channel.full .sd-fill {
+.bd-channel.full .bd-fill {
     color: var(--color-red);
     font-weight: 700;
 }
 
-.sd-hint {
+.bd-hint {
     font: 400 var(--t-label) var(--font-hand);
     color: var(--color-dimmed);
 }
 
+/* a clickable chip in its owner's colour: a car, a job, a line to type */
+.bd-chip {
+    padding: 1px 6px;
+    border: 2px solid var(--c, var(--ink));
+    background: color-mix(in srgb, var(--c, var(--ink)) 18%, #fff);
+    font: 700 var(--t-label) var(--font-label);
+    color: var(--ink);
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.bd-chip:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+
+/* a future still waiting, and one that has finished */
+.bd-chip.pending {
+    border-style: dashed;
+    background: #fff;
+}
+
+.bd-chip.done,
+.bd-chip.done:disabled {
+    background: color-mix(in srgb, var(--c) 28%, #fff);
+    opacity: 1;
+}
+
+/* one line of a list, marked in its owner's colour */
+.bd-record {
+    padding: 0 4px;
+    border-left: 4px solid var(--c);
+    text-align: left;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
 /* a message in the air: from one node's point to another's */
 
-.sd-flight {
+.bd-hop {
     position: absolute;
     z-index: 20;
     left: var(--fx);
@@ -2615,15 +2644,15 @@ button.sd-actor:hover {
     white-space: nowrap;
     pointer-events: none;
     box-shadow: 0 2px 6px rgba(51, 51, 51, 0.25);
-    animation: sd-fly 0.6s ease-in-out var(--delay, 0s) both;
+    animation: bd-fly 0.6s ease-in-out var(--delay, 0s) both;
 }
 
-.sd-flight.sub,
-.sd-flight.reply {
+/* control traffic (subscriptions, replies, failures) flies as a pill */
+.bd-hop.control {
     border-radius: 999px;
 }
 
-@keyframes sd-fly {
+@keyframes bd-fly {
     from {
         left: var(--fx);
         top: var(--fy);
@@ -2634,13 +2663,13 @@ button.sd-actor:hover {
     }
 }
 
-.sd-note {
+.bd-note {
     display: flex;
     justify-content: center;
     margin-top: 6px;
 }
 
-.sd-note .note-pill {
+.bd-note .note-pill {
     white-space: normal;
     text-align: center;
     max-width: 90%;
@@ -2649,18 +2678,282 @@ button.sd-actor:hover {
 /* Phones: the board keeps its desktop proportions and scrolls sideways;
    a graph this wide cannot be restacked without losing its edges. */
 @media (max-width: 700px) {
-    .speedd-game {
+    .board-game {
         height: 80vh;
         overflow-x: auto;
     }
 
-    .sd-board {
+    .bd-board {
         min-width: 980px;
     }
 
     /* the caption wraps into the narration on a phone; the narration is
        the part worth keeping */
-    .speedd-game .game-footer .dim {
+    .board-game .game-footer .dim {
         display: none;
     }
 }
+
+/* shared by the boards: a finished or closed actor */
+.bd-actor.gone {
+    opacity: 0.5;
+    border-style: dashed;
+}
+
+/* ---- budget chat: a room with an owner instead of a lock ---- */
+
+.ch-client {
+    width: 22%;
+    align-items: stretch;
+    text-align: left;
+    border-color: var(--c);
+}
+
+.ch-transcript {
+    min-height: 5.2em;
+    padding: 2px 5px;
+    border: 1px solid #e8dfc0;
+    background: #fff;
+    font-family: 'Fira Mono', monospace;
+    letter-spacing: 0;
+}
+
+.ch-line {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.ch-typing {
+    display: flex;
+    gap: 4px;
+    justify-content: space-between;
+}
+
+.ch-hangup {
+    --c: var(--color-dimmed);
+}
+
+.ch-conn {
+    width: 15%;
+}
+
+.ch-unread {
+    font-weight: 700;
+    color: var(--color-dimmed);
+}
+
+.ch-unread.lagging {
+    color: var(--color-red);
+}
+
+.ch-room {
+    width: 17%;
+    border-width: 3px;
+}
+
+.ch-names {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 4px;
+}
+
+.ch-name {
+    padding: 0 6px;
+    border: 1.5px solid var(--ink);
+    background: #fff;
+}
+
+.ch-ring-slots {
+    display: flex;
+    gap: 4px;
+}
+
+.ch-ring-slot {
+    max-width: 11em;
+    min-height: 1.9em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.ch-seq {
+    margin-right: 4px;
+    font-size: 0.85em;
+    color: var(--color-dimmed);
+}
+
+/* ---- watchdog: the loop-select with an inbox and a way out ---- */
+
+.watchdog-game {
+    height: 56vh;
+}
+
+.wd-owner {
+    width: 17%;
+    gap: 6px;
+}
+
+.wd-channel {
+    color: var(--color-dimmed);
+    white-space: nowrap;
+}
+
+.wd-actor {
+    width: 40%;
+    padding: 8px 12px;
+    border-width: 3px;
+}
+
+.wd-actor.running {
+    border-color: var(--color-highlight);
+}
+
+.wd-actor.idle {
+    opacity: 0.55;
+}
+
+.wd-loop {
+    align-self: flex-start;
+    font: var(--t-label) 'Fira Mono', monospace;
+    color: var(--color-dimmed);
+}
+
+.wd-body {
+    flex-direction: column;
+}
+
+.wd-signal {
+    font: 700 var(--t-state) var(--font-label);
+}
+
+/* time left on the sleep, draining */
+.wd-bar {
+    width: 100%;
+    height: 6px;
+    background: linear-gradient(to right, var(--color-highlight) var(--left), #e8e3d6 var(--left));
+}
+
+.wd-expiry {
+    width: 16%;
+}
+
+.wd-expiry.fired {
+    border-color: var(--color-red);
+    background: color-mix(in srgb, var(--color-red) 10%, #fff);
+}
+
+.wd-verdict {
+    font: 700 var(--t-state) var(--font-label);
+}
+
+.wd-expiry.fired .wd-verdict {
+    color: var(--color-red);
+}
+
+/* ---- pipeline: halres-downloader, stepped by hand ---- */
+
+.pipeline-game {
+    height: 60vh;
+}
+
+.pl-reader,
+.pl-collector {
+    width: 14%;
+    align-items: stretch;
+}
+
+.pl-records {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    text-align: left;
+}
+
+.pl-stage {
+    width: 12%;
+    padding: 0;
+    align-items: stretch;
+}
+
+/* the stage's own step button fills its head; its jobs sit below */
+.pl-step {
+    padding: 5px 6px;
+    border: none;
+    border-bottom: 1px solid rgba(51, 51, 51, 0.25);
+    background: transparent;
+    font: inherit;
+    color: inherit;
+    cursor: pointer;
+}
+
+.pl-step:hover {
+    background: color-mix(in srgb, var(--color-highlight) 10%, #fff);
+}
+
+.pl-work {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding: 5px 6px;
+    min-height: 6.5em;
+}
+
+.pl-job-state {
+    font-weight: 400;
+    color: var(--color-dimmed);
+}
+
+.pl-dropped .bd-slots {
+    min-height: 1.9em;
+}
+
+/* ---- FuturesUnordered: many futures, one task ---- */
+
+.unordered-game {
+    height: 56vh;
+}
+
+.fu-task {
+    width: 20%;
+    gap: 6px;
+}
+
+.fu-pushes,
+.fu-futs,
+.fu-yielded {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    align-self: stretch;
+}
+
+/* the task's pushes and the set's futures stack full width */
+.fu-pushes .bd-chip,
+.fu-futs .bd-chip {
+    text-align: left;
+}
+
+.fu-set {
+    width: 30%;
+    min-height: 40%;
+    justify-content: flex-start;
+    border-width: 3px;
+}
+
+.fu-pos {
+    margin-right: 6px;
+    color: var(--color-dimmed);
+}
+
+.fu-state {
+    font-weight: 400;
+    color: var(--color-dimmed);
+}
+
+.fu-out {
+    width: 18%;
+    min-height: 30%;
+    justify-content: flex-start;
+}
+

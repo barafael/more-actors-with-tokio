@@ -1,0 +1,26 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>watchdog</title>
+<meta name="game-mode" content="local">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bitter:ital@0;1&amp;family=Fira+Mono&amp;family=Patrick+Hand&amp;family=Space+Mono:wght@400;700&amp;display=swap">
+<link rel="stylesheet" href="main.css">
+<script>window.hydrate_queue=[];window.dx_hydrate=(id,data,debug_types,debug_locations)=>{let decoded=atob(data),bytes=Uint8Array.from(decoded,(c)=>c.charCodeAt(0));if(window.hydration_callback)window.hydration_callback(id,bytes,debug_types,debug_locations);else window.hydrate_queue.push([id,bytes,debug_types,debug_locations])};</script>
+<style>
+.export-nav{position:fixed;bottom:8px;left:50%;transform:translateX(-50%);z-index:60;display:flex;gap:10px;align-items:center;font:700 12px 'Space Mono',monospace;color:#77705f;background:rgba(250,245,232,.9);border:1px solid rgba(59,56,47,.35);padding:4px 12px;border-radius:0;user-select:none}
+.export-nav a{color:#eb5b20;text-decoration:none}
+.export-nav a:hover{text-decoration:underline}
+.export-nav .off{opacity:.35}
+</style>
+</head>
+<body>
+<div id="main">
+<!--placeholder0--><!--placeholder1--><!--placeholder2--><div class="deck-root" tabindex=0 autofocus=true data-node-hydration="3,keydown:1,mousemove:1"><div class="topbar"><span class="seat-badge local" data-node-hydration="4">single-player</span></div><div class="slide" data-node-hydration="5"><h2>The loop gets an actor</h2><p class="dim">A watchdog: the same select!, now owning an inbox and a oneshot. Feed it, or it fires.</p><div class="diagram board-game watchdog-game" data-node-hydration="6"><div class="game-header">watchdog</div><div class="status">live · your own watchdog</div><div class="bd-board"><svg class="arrow-layer bd-edges" viewBox="0 0 100 100" preserveAspectRatio="none"><line class="bd-edge" x1="13" y1="50" x2="50" y2="50" data-node-hydration="7"></line><line class="bd-edge dashed" x1="50" y1="50" x2="88" y2="50" data-node-hydration="8"></line></svg><div class="bd-actor wd-owner" style="left: 13%; top: 50%;" data-node-hydration="9"><div class="bd-head">you: the owner</div><button class="btn await" data-node-hydration="10,click:1">run()</button><!--placeholder11--></div><div class="bd-channel wd-channel" style="left: 25%; top: 42%;" data-node-hydration="12"><div><!--node-id13-->mpsc(16)<!--#--></div><div class="bd-hint"><!--node-id14-->0 queued<!--#--></div></div><div class="bd-actor wd-actor idle" style="left: 50%; top: 50%;" data-node-hydration="15"><div class="bd-head"><!--node-id16-->Watchdog { duration: 5s }<!--#--></div><div class="wd-loop">loop { select! {</div><div class="race"><div class="race-branch" data-node-hydration="17"><div class="branch-head">reset_rx.recv()</div><div class="branch-body wd-body"><span class="bd-hint" data-node-hydration="18">—</span></div></div><div class="race-branch" data-node-hydration="19"><div class="branch-head">sleep, if active</div><div class="branch-body wd-body"><span class="bd-hint" data-node-hydration="20">—</span></div></div></div><div class="wd-loop">} }</div><div class="bd-doing"><!--node-id21-->not spawned<!--#--><!--placeholder22--></div></div><div class="bd-actor wd-expiry" style="left: 88%; top: 50%;" data-node-hydration="23"><div class="bd-head">expire_rx</div><div class="bd-hint">oneshot::Receiver&#60;Expired&#62;</div><div class="wd-verdict"><!--node-id24-->—<!--#--></div></div><!--placeholder25--></div><div class="bd-note"><span class="note-pill"><!--node-id26-->Watchdog::with_timeout(5s).run() spawns the actor. Then keep it fed.<!--#--></span></div></div></div><div class="chrome-zone" data-node-hydration="27"><div class="chrome" data-node-hydration="28"><button class="nav" aria-label="previous slide" data-node-hydration="29,click:1">←</button><span class="counter"><!--node-id30-->7 / 20<!--#--></span><button class="nav" aria-label="next slide" data-node-hydration="31,click:1">→</button></div></div><!--placeholder32--></div>
+</div>
+<nav class="export-nav"><a href="slide-5-loop-select.html" rel="prev">&#8249; prev</a><span class="count">7 / 20</span><a href="slide-7-recipe.html" rel="next">next &#8250;</a></nav>
+<script>window.initial_dioxus_hydration_data="hoEY9vb2gRj1gRj1gRj1";window.initial_dioxus_hydration_debug_types=[];window.initial_dioxus_hydration_debug_locations=[];</script>
+<script>(function(){var PREV="slide-5-loop-select.html",NEXT="slide-7-recipe.html";document.addEventListener("keydown",function(e){if(window.__dx_booted===true||e.defaultPrevented||e.altKey||e.ctrlKey||e.metaKey)return;var t=e.target;if(t&&(t.tagName==="INPUT"||t.tagName==="TEXTAREA"||t.tagName==="BUTTON"||t.isContentEditable))return;var k=e.key,go=null;if(k==="ArrowRight"||k==="PageDown"||k===" ")go=NEXT;else if(k==="ArrowLeft"||k==="PageUp")go=PREV;if(go){e.preventDefault();location.href=go;}});})();</script>
+<script type="module" src="./wasm/more-actors-with-tokio.js" onload="window.__dx_booted=true"></script>
+</body>
+</html>

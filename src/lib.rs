@@ -279,28 +279,7 @@ pub fn Deck(mode: GameMode, initial_slide: usize) -> Element {
             div { class: "topbar",
                 SeatBadge {}
             }
-            // CONCEPT.md's arc: the mutex as the problem, then futures (a
-            // timer, real I/O, a race, the race in a loop), which makes the
-            // actor recipe a summary rather than an introduction; then the
-            // channels that connect actors, in the plan's order; then Kay.
-            { match slide() {
-                0 => rsx! { slides::Title {} },
-                1 => rsx! { slides::MutexGameSlide {} },
-                2 => rsx! { slides::TimerGameSlide {} },
-                3 => rsx! { slides::ButtonGameSlide {} },
-                4 => rsx! { slides::SelectGameSlide {} },
-                5 => rsx! { slides::LoopSelectGameSlide {} },
-                6 => rsx! { slides::Recipe {} },
-                7 => rsx! { slides::UnitTestSlide {} },
-                8 => rsx! { slides::MpscGameSlide {} },
-                9 => rsx! { slides::CycleGameSlide {} },
-                10 => rsx! { slides::OneshotGameSlide {} },
-                11 => rsx! { slides::CallGameSlide {} },
-                12 => rsx! { slides::BroadcastGameSlide {} },
-                13 => rsx! { slides::WatchGameSlide {} },
-                14 => rsx! { slides::SpeeddSlide {} },
-                _ => rsx! { slides::KaySlide {} },
-            } }
+            { slides::slide(slide()) }
             slides::Chrome { slide, awake }
             if showing_join() {
                 games::qr::JoinOverlay {

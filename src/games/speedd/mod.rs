@@ -15,93 +15,32 @@ mod model;
 
 use dioxus::prelude::*;
 
+use crate::games::board::{at_style, edge, use_stepper, ChannelBox, Chip, Flight, FlightLayer};
 use crate::games::palette;
 use layout::position;
 use model::{
-    road_index, Cargo, Collector, Dispatcher, Hop, Node, Speedd, Step, Ticket, CAMERAS, CARS,
+    road_index, Cargo, Collector, Dispatcher, Hop, Node, Speedd, Ticket, CAMERAS, CARS,
     DISPATCHERS, QUEUE_CAPACITY, REPORTING_CAPACITY, ROADS, SUBSCRIPTION_CAPACITY,
 };
-
-/// How long one leg of a hop flies, in seconds; the next leg starts as it
-/// lands. Matches `.sd-flight` in main.css.
-const LEG_S: f64 = 0.6;
 
 /// The colour a car's plates and tickets carry through the board.
 fn car_hex(car: usize) -> String {
     palette::sender_hex(car as u64 + 1)
 }
 
-/// A message in the air between two nodes.
-#[derive(Clone, PartialEq)]
-struct Flight {
-    key: u64,
-    from: (f64, f64),
-    to: (f64, f64),
-    label: String,
-    kind: &'static str,
-    color: String,
-    delay: f64,
-}
-
-impl Flight {
-    fn new(key: u64, hop: &Hop) -> Self {
-        let (kind, color) = match hop.cargo {
-            Cargo::Plate(car) => ("plate", car_hex(car)),
-            Cargo::Ticket(car) => ("ticket", car_hex(car)),
-            Cargo::Subscription => ("sub", "var(--color-blue)".to_string()),
-            Cargo::Reply => ("reply", "var(--color-green)".to_string()),
-        };
-        Self {
-            key,
-            from: position(hop.from),
-            to: position(hop.to),
-            label: hop.label.clone(),
-            kind,
-            color,
-            delay: f64::from(hop.leg) * LEG_S,
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
-struct Board {
-    sim: Signal<Speedd>,
-    flights: Signal<Vec<Flight>>,
-    next_key: Signal<u64>,
-    note: Signal<String>,
-}
-
-impl Board {
-    /// Run one actor step and launch what it sent.
-    fn step(mut self, run: impl FnOnce(&mut Speedd) -> Step) {
-        let step = self.sim.with_mut(run);
-        self.note.set(step.note);
-        for hop in &step.hops {
-            let key = (self.next_key)();
-            self.next_key.set(key + 1);
-            self.flights.with_mut(|f| f.push(Flight::new(key, hop)));
-            // never let a missed animationend strand a flight on the board
-            #[cfg(target_arch = "wasm32")]
-            {
-                let mut flights = self.flights;
-                let lifetime = ((f64::from(hop.leg) + 1.0) * LEG_S * 1000.0) as u32 + 900;
-                spawn(async move {
-                    gloo_timers::future::TimeoutFuture::new(lifetime).await;
-                    flights.with_mut(|f| f.retain(|flight| flight.key != key));
-                });
-            }
-        }
-    }
-
-    fn land(mut self, key: u64) {
-        self.flights
-            .with_mut(|f| f.retain(|flight| flight.key != key));
-    }
-
-    fn reset(mut self) {
-        self.sim.set(Speedd::new());
-        self.flights.set(Vec::new());
-        self.note.set(START.to_string());
+fn flight(hop: &Hop) -> Flight {
+    let (color, control) = match hop.cargo {
+        Cargo::Plate(car) | Cargo::Ticket(car) => (car_hex(car), false),
+        Cargo::Subscription => ("var(--color-blue)".to_string(), true),
+        Cargo::Reply => ("var(--color-green)".to_string(), true),
+    };
+    Flight {
+        from: position(hop.from),
+        to: position(hop.to),
+        label: hop.label.clone(),
+        color,
+        control,
+        leg: hop.leg,
     }
 }
 
@@ -110,20 +49,15 @@ const START: &str =
 
 #[component]
 pub fn SpeeddGame() -> Element {
-    let board = Board {
-        sim: use_signal(Speedd::new),
-        flights: use_signal(Vec::new),
-        next_key: use_signal(|| 0u64),
-        note: use_signal(|| START.to_string()),
-    };
-    let sim = board.sim.read();
+    let board = use_stepper(Speedd::new, START, flight);
+    let sim = board.state.read();
 
     rsx! {
-        div { class: "diagram speedd-game",
+        div { class: "diagram board-game speedd-game",
             div { class: "game-header", "speedd" }
             div { class: "status", "single-player · click an actor to step it" }
 
-            div { class: "sd-board",
+            div { class: "bd-board",
                 Edges {}
 
                 for (i, spec) in CAMERAS.iter().enumerate() {
@@ -142,8 +76,8 @@ pub fn SpeeddGame() -> Element {
                     at: layout::REPORTING,
                     title: "mpsc · reporting",
                     capacity: REPORTING_CAPACITY,
-                    chips: sim.reporting().iter().map(|r| Chip::car(r.car, CARS[r.car].plate)).collect::<Vec<_>>(),
-                    parked: sim.reporting_parked().iter().map(|r| Chip::car(r.car, CARS[r.car].plate)).collect::<Vec<_>>(),
+                    chips: sim.reporting().iter().map(|r| plate_chip(r.car)).collect::<Vec<_>>(),
+                    parked: sim.reporting_parked().iter().map(|r| plate_chip(r.car)).collect::<Vec<_>>(),
                 }
 
                 CollectorNode {
@@ -157,8 +91,8 @@ pub fn SpeeddGame() -> Element {
                     at: layout::SUBSCRIPTION,
                     title: "mpsc · dispatcher subscription",
                     capacity: SUBSCRIPTION_CAPACITY,
-                    chips: sim.subscriptions().iter().map(|s| Chip::sub(s.road, s.dispatcher)).collect::<Vec<_>>(),
-                    parked: sim.subscriptions_parked().iter().map(|s| Chip::sub(s.road, s.dispatcher)).collect::<Vec<_>>(),
+                    chips: sim.subscriptions().iter().map(|s| sub_chip(s.road, s.dispatcher)).collect::<Vec<_>>(),
+                    parked: sim.subscriptions_parked().iter().map(|s| sub_chip(s.road, s.dispatcher)).collect::<Vec<_>>(),
                 }
 
                 for (r, (road, limit)) in ROADS.iter().enumerate() {
@@ -169,17 +103,17 @@ pub fn SpeeddGame() -> Element {
                                 at: position(Node::Queue(r)),
                                 title: format!("mpmc · ticket · road {road} ({limit} mph)"),
                                 capacity: QUEUE_CAPACITY,
-                                chips: tickets.iter().map(Chip::ticket).collect::<Vec<_>>(),
-                                parked: sim.queue_parked(*road).iter().map(Chip::ticket).collect::<Vec<_>>(),
+                                chips: tickets.iter().map(ticket_chip).collect::<Vec<_>>(),
+                                parked: sim.queue_parked(*road).iter().map(ticket_chip).collect::<Vec<_>>(),
                             }
                         },
                         None => rsx! {
                             div {
                                 key: "q{r}",
-                                class: "sd-channel sd-uncreated",
+                                class: "bd-channel bd-uncreated",
                                 style: at_style(position(Node::Queue(r))),
-                                span { class: "sd-channel-title", "road {road}: no queue yet" }
-                                span { class: "sd-hint", "created by the first ticket or subscription" }
+                                span { class: "bd-channel-title", "road {road}: no queue yet" }
+                                span { class: "bd-hint", "created by the first ticket or subscription" }
                             }
                         },
                     }
@@ -198,89 +132,60 @@ pub fn SpeeddGame() -> Element {
                     }
                 }
 
-                for flight in board.flights.read().iter().cloned() {
-                    span {
-                        key: "{flight.key}",
-                        class: "sd-flight {flight.kind}",
-                        style: "--fx: {flight.from.0}%; --fy: {flight.from.1}%; --tx: {flight.to.0}%; --ty: {flight.to.1}%; --delay: {flight.delay}s; --c: {flight.color};",
-                        onanimationend: move |_| board.land(flight.key),
-                        "{flight.label}"
-                    }
-                }
+                FlightLayer { flights: board.flights }
             }
 
-            div { class: "sd-note",
+            div { class: "bd-note",
                 span { class: "note-pill", "{board.note}" }
             }
 
             div { class: "game-footer",
                 span { class: "dim", "the Listener and heartbeat tasks are left out · subscriptions win the Collector's select!" }
-                button { class: "btn", onclick: move |_| board.reset(), "reset" }
+                button { class: "btn", onclick: move |_| board.reset(Speedd::new()), "reset" }
             }
         }
     }
 }
 
-fn at_style((x, y): (f64, f64)) -> String {
-    format!("left: {x}%; top: {y}%;")
+fn plate_chip(car: usize) -> Chip {
+    Chip {
+        label: CARS[car].plate.to_string(),
+        color: car_hex(car),
+    }
 }
 
-/// One message drawn in a channel slot.
-#[derive(Clone, PartialEq)]
-struct Chip {
-    label: String,
-    color: String,
+fn ticket_chip(ticket: &Ticket) -> Chip {
+    Chip {
+        label: format!("{} {}", CARS[ticket.car].plate, ticket.speed / 100),
+        color: car_hex(ticket.car),
+    }
 }
 
-impl Chip {
-    fn car(car: usize, label: &str) -> Self {
-        Self {
-            label: label.to_string(),
-            color: car_hex(car),
-        }
-    }
-
-    fn ticket(ticket: &Ticket) -> Self {
-        Self {
-            label: format!("{} {}", CARS[ticket.car].plate, ticket.speed / 100),
-            color: car_hex(ticket.car),
-        }
-    }
-
-    fn sub(road: u16, dispatcher: usize) -> Self {
-        Self {
-            label: format!("{road}? · d{}", dispatcher + 1),
-            color: "var(--color-blue)".to_string(),
-        }
+fn sub_chip(road: u16, dispatcher: usize) -> Chip {
+    Chip {
+        label: format!("{road}? · d{}", dispatcher + 1),
+        color: "var(--color-blue)".to_string(),
     }
 }
 
 /// The edges of the graph, drawn once under everything.
 #[component]
 fn Edges() -> Element {
-    let line = |from: (f64, f64), to: (f64, f64), dashed: bool| {
-        rsx! {
-            line {
-                class: if dashed { "sd-edge dashed" } else { "sd-edge" },
-                x1: "{from.0}", y1: "{from.1}", x2: "{to.0}", y2: "{to.1}",
-            }
-        }
-    };
     rsx! {
-        svg { class: "arrow-layer sd-edges", view_box: "0 0 100 100", preserve_aspect_ratio: "none",
+        svg { class: "arrow-layer bd-edges", view_box: "0 0 100 100", preserve_aspect_ratio: "none",
             for i in 0..CAMERAS.len() {
-                {line(position(Node::Camera(i)), layout::REPORTING, false)}
+                {edge(position(Node::Camera(i)), layout::REPORTING, false)}
             }
-            {line(layout::REPORTING, layout::COLLECTOR, false)}
-            {line(layout::SUBSCRIPTION, layout::COLLECTOR, true)}
+            {edge(layout::REPORTING, layout::COLLECTOR, false)}
+            {edge(layout::SUBSCRIPTION, layout::COLLECTOR, true)}
             for r in 0..ROADS.len() {
-                {line(layout::COLLECTOR, position(Node::Queue(r)), false)}
+                {edge(layout::COLLECTOR, position(Node::Queue(r)), false)}
             }
             for (d, roads) in DISPATCHERS.iter().enumerate() {
                 for road in roads.iter() {
-                    {line(position(Node::Queue(road_index(*road))), position(Node::Dispatcher(d)), false)}
+                    {edge(position(Node::Queue(road_index(*road))), position(Node::Dispatcher(d)), false)}
                 }
-                {line(position(Node::Dispatcher(d)), layout::SUBSCRIPTION, true)}
+                {edge(position(Node::Dispatcher(d)), layout::SUBSCRIPTION, true)}
             }
         }
     }
@@ -297,55 +202,18 @@ fn CameraNode(
 ) -> Element {
     rsx! {
         div {
-            class: if stuck { "sd-actor sd-camera parked" } else { "sd-actor sd-camera" },
+            class: if stuck { "bd-actor sd-camera parked" } else { "bd-actor sd-camera" },
             style: at_style(position(Node::Camera(index))),
-            div { class: "sd-actor-head", title: "camera: road {road}, mile {mile}, limit {limit} mph", "road {road} · mile {mile}" }
+            div { class: "bd-head", title: "camera: road {road}, mile {mile}, limit {limit} mph", "road {road} · mile {mile}" }
             div { class: "sd-cars",
                 for (car, spec) in CARS.iter().enumerate() {
                     button {
-                        class: "sd-car",
+                        class: "bd-chip",
                         style: "--c: {car_hex(car)};",
                         disabled: stuck,
                         title: "{spec.plate} at {spec.mph} mph passes this camera",
                         onclick: move |_| onpick.call(car),
                         "{spec.plate}"
-                    }
-                }
-            }
-        }
-    }
-}
-
-#[component]
-fn ChannelBox(
-    at: (f64, f64),
-    title: String,
-    capacity: usize,
-    chips: Vec<Chip>,
-    parked: Vec<Chip>,
-) -> Element {
-    let full = chips.len() >= capacity;
-    rsx! {
-        div {
-            class: if full { "sd-channel full" } else { "sd-channel" },
-            style: at_style(at),
-            span { class: "sd-channel-title", "{title}" }
-            div { class: "sd-slots",
-                for slot in 0..capacity {
-                    match chips.get(slot) {
-                        Some(chip) => rsx! {
-                            span { class: "sd-slot filled", style: "--c: {chip.color};", "{chip.label}" }
-                        },
-                        None => rsx! { span { class: "sd-slot" } },
-                    }
-                }
-                span { class: "sd-fill", "{chips.len()}/{capacity}" }
-            }
-            if !parked.is_empty() {
-                div { class: "sd-parked",
-                    span { class: "sd-hint", "parked in send()" }
-                    for chip in parked.iter() {
-                        span { class: "sd-slot parked", style: "--c: {chip.color};", "{chip.label}" }
                     }
                 }
             }
@@ -387,25 +255,25 @@ fn CollectorNode(
 ) -> Element {
     let (class, doing) = match state {
         Collector::Sending { road, .. } if stuck => (
-            "sd-actor sd-collector parked",
+            "bd-actor sd-collector parked",
             format!("parked: send → road {road}"),
         ),
         Collector::Sending { road, .. } => (
-            "sd-actor sd-collector held",
+            "bd-actor sd-collector held",
             format!("send → road {road} done · click"),
         ),
-        Collector::Ready => ("sd-actor sd-collector", "in select!".to_string()),
+        Collector::Ready => ("bd-actor sd-collector", "in select!".to_string()),
     };
     rsx! {
         button {
             class,
             style: at_style(layout::COLLECTOR),
             onclick: move |e| onstep.call(e),
-            div { class: "sd-actor-head", "Collector" }
-            div { class: "sd-doing", "{doing}" }
+            div { class: "bd-head", "Collector" }
+            div { class: "bd-doing", "{doing}" }
             div { class: "sd-records",
                 if summary.is_empty() {
-                    span { class: "sd-hint", "no sightings yet" }
+                    span { class: "bd-hint", "no sightings yet" }
                 }
                 for line in summary.iter() {
                     span { "{line}" }
@@ -440,11 +308,11 @@ fn DispatcherNode(
     };
     rsx! {
         button {
-            class: "sd-actor sd-dispatcher{class}",
+            class: "bd-actor sd-dispatcher{class}",
             style: at_style(position(Node::Dispatcher(index))),
             onclick: move |e| onstep.call(e),
-            div { class: "sd-actor-head", "dispatcher [{names.join(\", \")}]" }
-            div { class: "sd-doing", "{doing}" }
+            div { class: "bd-head", "dispatcher [{names.join(\", \")}]" }
+            div { class: "bd-doing", "{doing}" }
         }
     }
 }
