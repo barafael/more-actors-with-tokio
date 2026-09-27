@@ -74,7 +74,7 @@ pub fn ButtonGame() -> Element {
 
     rsx! {
         div { class: "diagram button-game",
-            div { class: "game-header", "button-future" }
+            div { class: "game-header", "button" }
             div { class: "status", "{conn.status}" }
 
             // the future, as an actor dot

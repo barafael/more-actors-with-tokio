@@ -67,7 +67,7 @@ pub fn ChatGame() -> Element {
 
     rsx! {
         div { class: "diagram board-game chat-game",
-            div { class: "game-header", "budget chat" }
+            div { class: "game-header", "chat room" }
             div { class: "status", "single-player · click an actor to step it" }
 
             div { class: "bd-board",

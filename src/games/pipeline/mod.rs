@@ -91,7 +91,7 @@ pub fn PipelineGame() -> Element {
 
     rsx! {
         div { class: "diagram board-game pipeline-game",
-            div { class: "game-header", "halres-downloader" }
+            div { class: "game-header", "pipeline" }
             div { class: "status", "single-player · click an actor to step it" }
 
             div { class: "bd-board",

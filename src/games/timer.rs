@@ -107,7 +107,7 @@ pub fn TimerGame() -> Element {
 
     rsx! {
         div { class: "diagram timer-game",
-            div { class: "game-header", "timer-future" }
+            div { class: "game-header", "timer" }
             div { class: "status", "{conn.status}" }
 
             Dial { wall_ms, pending: snapshot.pending }
@@ -189,7 +189,7 @@ fn Dial(wall_ms: f64, pending: bool) -> Element {
     let (x2, y2) = (50.0 + DIAL_R * 0.82 * cos, 50.0 + DIAL_R * 0.82 * sin);
 
     rsx! {
-        svg { class: "timer-dial", view_box: "0 0 100 100", width: "220", height: "220",
+        svg { class: "timer-dial", view_box: "0 0 100 100",
             circle {
                 class: if pending { "dial-face pending" } else { "dial-face" },
                 cx: "50", cy: "50", r: "{DIAL_R}",

@@ -17,11 +17,11 @@ use crate::sim::now_ms;
 // the crate calls its messages `Signal`, which dioxus already means
 use model::{Fired, Phase, Signal as Pet, WatchdogSim, CAPACITY, TIMEOUT_MS};
 
-const OWNER: (f64, f64) = (13.0, 50.0);
+const OWNER: (f64, f64) = (11.0, 50.0);
 const ACTOR: (f64, f64) = (50.0, 50.0);
 const EXPIRY: (f64, f64) = (88.0, 50.0);
 /// Where the channel's label sits on the edge.
-const CHANNEL: (f64, f64) = (25.0, 42.0);
+const CHANNEL: (f64, f64) = (22.0, 36.0);
 
 /// How long a fired branch stays lit.
 const FLASH_MS: f64 = 900.0;

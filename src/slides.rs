@@ -74,7 +74,7 @@ pub fn Title() -> Element {
     rsx! {
         div { class: "slide lead",
             h1 { "Actors with Tokio" }
-            h2 { "Live minigames" }
+            h2 { "The slides run the system they describe" }
             p { class: "dim", "You are the senders." }
         }
     }
@@ -111,7 +111,7 @@ pub fn TimerGameSlide() -> Element {
 pub fn SelectGameSlide() -> Element {
     rsx! {
         div { class: "slide",
-            h2 { "select!" }
+            h2 { "The select! macro" }
             p { class: "dim", "Two futures, awaited together. The first to complete wins; the other is dropped mid-flight, never resumed." }
             SelectGame {}
         }
@@ -193,7 +193,7 @@ pub fn CallGameSlide() -> Element {
 pub fn WatchdogSlide() -> Element {
     rsx! {
         div { class: "slide",
-            h2 { "The loop gets an actor" }
+            h2 { "The watchdog actor" }
             p { class: "dim", "A watchdog: the same select!, now owning an inbox and a oneshot. Feed it, or it fires." }
             WatchdogGame {}
         }
@@ -206,7 +206,7 @@ pub fn WatchdogSlide() -> Element {
 pub fn ChatSlide() -> Element {
     rsx! {
         div { class: "slide",
-            h2 { "A chat room with an owner" }
+            h2 { "A chat room, without the lock" }
             p { class: "dim", "Budget Chat, where a room actor owns the member list instead of a lock." }
             ChatGame {}
         }
@@ -218,7 +218,7 @@ pub fn ChatSlide() -> Element {
 pub fn UnorderedSlide() -> Element {
     rsx! {
         div { class: "slide",
-            h2 { "Many futures, one task" }
+            h2 { "FuturesUnordered" }
             p { class: "dim", "FuturesUnordered: push futures in, and next() hands back whichever finishes first." }
             UnorderedGame {}
         }
@@ -231,7 +231,7 @@ pub fn UnorderedSlide() -> Element {
 pub fn PipelineSlide() -> Element {
     rsx! {
         div { class: "slide",
-            h2 { "A pipeline, and how it stops" }
+            h2 { "A pipeline" }
             p { class: "dim", "halres-downloader: each stage takes work while it has room and passes on whatever finishes first." }
             PipelineGame {}
         }

@@ -48,7 +48,7 @@ pub fn CycleGame() -> Element {
 
     rsx! {
         div { class: "diagram cycle-game",
-            div { class: "game-header", "A ⇄ B" }
+            div { class: "game-header", "cycle" }
             div { class: "status", "single-player · your own actors" }
 
             div { class: "cy-stage",

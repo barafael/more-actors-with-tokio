@@ -212,6 +212,10 @@ strong {
     --t-body: clamp(11px, 2.4cqh, 15px);
     --t-state: clamp(13px, 3.2cqh, 21px);
     --t-big: clamp(18px, 5cqh, 32px);
+    /* How much a centred stage grows on a wide screen. The stage games
+       draw at their natural size, which leaves a projector's box mostly
+       empty; transform keeps layout and clicks where they were. */
+    --stage-scale: 1.25;
     position: relative;
     margin-top: 0.6rem;
     border: 2px solid rgba(51, 51, 51, 0.25);
@@ -1323,10 +1327,6 @@ strong {
 }
 
 /* The static export: one browser, every role, nobody to present to. */
-.seat-badge.local {
-    border-style: dotted;
-    opacity: 0.75;
-}
 
 /* `q` with no JOIN_URL configured: explain, do not show an empty card. */
 .join-missing {
@@ -1347,6 +1347,12 @@ strong {
     top: 50%;
     left: 50%;
     transform: translate(-50%, -58%);
+}
+
+/* the dial's size follows the box rather than a fixed 220px */
+.timer-game .timer-dial {
+    width: 52cqh;
+    height: 52cqh;
 }
 
 .dial-face {
@@ -1444,8 +1450,8 @@ strong {
 }
 
 .race-branch {
-    min-width: 190px;
-    padding: 0.9rem 1.1rem;
+    min-width: clamp(190px, 26cqw, 320px);
+    padding: clamp(0.9rem, 4cqh, 1.6rem) 1.1rem;
     border: 2px dashed rgba(51, 51, 51, 0.35);
     border-radius: 0;
     background: rgba(252, 248, 238, 0.85);
@@ -1601,14 +1607,14 @@ strong {
 
 /* the rules alone, for now: code comes back with the snippet tooling */
 .recipe {
-    max-width: 38em;
+    max-width: 40em;
 }
 
 .recipe-rules {
     margin: 1em 0 0;
     padding-left: 1.1em;
-    font-size: 0.78rem;
-    line-height: 1.4;
+    font-size: 1rem;
+    line-height: 1.45;
 }
 
 .recipe-rules li + li {
@@ -2079,6 +2085,15 @@ strong {
     gap: 14px;
 }
 
+/* the centred stages draw at natural size and are scaled up as one */
+.mx-stage,
+.cr-stage,
+.os-stage,
+.cy-stage {
+    transform: scale(var(--stage-scale));
+    transform-origin: center;
+}
+
 .mx-queue {
     display: flex;
     flex-direction: column;
@@ -2359,7 +2374,7 @@ strong {
     margin: 0.8em 0 0;
     padding: 0.4em 0 0.4em 1em;
     border-left: 6px solid var(--color-highlight);
-    font: italic 400 0.9rem/1.4 'Bitter', serif;
+    font: italic 400 1.15rem/1.4 'Bitter', serif;
 }
 
 .kay-quote footer {
@@ -2371,9 +2386,9 @@ strong {
 .kay-map {
     display: grid;
     grid-template-columns: max-content 1fr;
-    gap: 0.35em 1.2em;
-    margin-top: 1em;
-    font-size: 0.62rem;
+    gap: 0.5em 1.2em;
+    margin-top: 1.2em;
+    font-size: 0.82rem;
 }
 
 .kay-row {
@@ -2395,6 +2410,7 @@ strong {
 
     .diagram {
         flex: none;
+        --stage-scale: 1;
     }
 
     .mutex-game,
@@ -2805,7 +2821,8 @@ button.bd-actor:hover {
 
 .wd-owner {
     width: 17%;
-    gap: 6px;
+    gap: 8px;
+    padding: 10px 12px;
 }
 
 .wd-channel {
@@ -2814,9 +2831,16 @@ button.bd-actor:hover {
 }
 
 .wd-actor {
-    width: 40%;
-    padding: 8px 12px;
+    width: 46%;
+    padding: 12px 16px;
     border-width: 3px;
+    gap: 6px;
+}
+
+/* the watchdog's two branches are the select slide's, drawn larger */
+.wd-actor .race-branch {
+    min-width: clamp(190px, 18cqw, 300px);
+    padding: clamp(0.9rem, 4cqh, 1.6rem) 1.1rem;
 }
 
 .wd-actor.running {
@@ -2849,7 +2873,8 @@ button.bd-actor:hover {
 }
 
 .wd-expiry {
-    width: 16%;
+    width: 17%;
+    padding: 10px 12px;
 }
 
 .wd-expiry.fired {
@@ -2921,8 +2946,9 @@ button.bd-actor:hover {
 /* ---- FuturesUnordered: many futures, one task ---- */
 
 .fu-task {
-    width: 20%;
-    gap: 6px;
+    width: 22%;
+    gap: 8px;
+    padding: 10px 12px;
 }
 
 .fu-pushes,
@@ -2941,10 +2967,11 @@ button.bd-actor:hover {
 }
 
 .fu-set {
-    width: 30%;
-    min-height: 40%;
+    width: 34%;
+    min-height: 48%;
     justify-content: flex-start;
     border-width: 3px;
+    padding: 10px 12px;
 }
 
 .fu-pos {
@@ -2958,8 +2985,9 @@ button.bd-actor:hover {
 }
 
 .fu-out {
-    width: 18%;
-    min-height: 30%;
+    width: 20%;
+    min-height: 36%;
     justify-content: flex-start;
+    padding: 10px 12px;
 }
 

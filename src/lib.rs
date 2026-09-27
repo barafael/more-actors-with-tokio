@@ -306,10 +306,10 @@ fn SeatBadge() -> Element {
 
     // The export is one browser playing alone: it holds every role, so
     // naming one would be a fiction. Say what is actually true instead.
+    // The export is one browser playing alone, and every diagram already
+    // says so in its own status line; a second badge is noise.
     if mode == GameMode::Local {
-        return rsx! {
-            span { class: "seat-badge local", "single-player" }
-        };
+        return rsx! {};
     }
 
     rsx! {
