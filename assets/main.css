@@ -23,8 +23,11 @@
 }
 
 html {
-    /* marp gaia: 35px base on a 720px-tall slide */
-    font-size: clamp(14px, 4.861vh, 40px);
+    /* marp gaia: 35px base on a 720px-tall slide. On a screen narrower than
+       16:9 the width decides instead, as if the slide were letterboxed:
+       sized by height alone, a 4:3 lede wraps to three lines and takes the
+       room its game needs. */
+    font-size: clamp(14px, min(4.861vh, 2.734vw), 40px);
 }
 
 body {
@@ -2032,6 +2035,75 @@ strong {
     color: var(--ink);
 }
 
+/* A short box (768p and below): the test has 18 lines and the world 9
+   rows plus the actor and the channel, so every gap goes before they fit. */
+@container (max-height: 420px) {
+    .unit-test-game {
+        gap: 4px;
+        padding-top: 40px;
+    }
+
+    .ut-code {
+        font-size: clamp(8px, min(2.45cqh, 0.86cqw), 22px);
+        line-height: 1.15;
+        padding: 3px 0;
+    }
+
+    .ut-line {
+        min-height: 1.15em;
+    }
+
+    .ut-world {
+        gap: 4px;
+        padding: 5px 6px;
+        line-height: 1.2;
+    }
+
+    .ut-actor {
+        padding: 3px 7px;
+    }
+
+    .ut-slots {
+        margin-top: 2px;
+        min-height: 1.6em;
+    }
+
+    .ut-slot {
+        padding: 0 5px;
+    }
+
+    .ut-scope {
+        row-gap: 0;
+    }
+
+    .ut-note {
+        min-height: 0;
+    }
+
+    .ut-locals {
+        min-height: 0;
+        padding: 3px 8px;
+    }
+}
+
+/* A narrow box (4:3): the longest lines of both code panes must fit side
+   by side, so the code may drop to 8px and the world pane gives up width. */
+@container (max-width: 950px) {
+    .ut-panes {
+        grid-template-columns: minmax(0, 1.3fr) minmax(0, 1.3fr) minmax(0, 0.7fr);
+        gap: 6px;
+    }
+
+    .ut-code {
+        font-size: clamp(8px, min(2.6cqh, 0.86cqw), 22px);
+    }
+
+    .ut-gutter {
+        width: 2.2em;
+        padding-right: 0.6em;
+    }
+}
+
 .ut-controls {
     display: flex;
     flex-wrap: wrap;
@@ -2581,6 +2653,63 @@ strong {
     .cy-return {
         width: 90%;
     }
+
+    /* games positioned in percent of their box pile up in a 300px one */
+    .button-game,
+    .select-game {
+        min-height: 480px;
+    }
+
+    .loop-select-game {
+        min-height: 540px;
+    }
+
+    /* mpsc and watch are left-to-right flows whose arrows and flights are
+       drawn in percent, so they cannot be restacked: they lay out a third
+       wider than the phone and are shrunk to fit */
+    .mpsc-game,
+    .watch-game {
+        zoom: 0.75;
+        min-height: 560px;
+    }
+
+    .mpsc-game .receiver-group {
+        right: 3%;
+    }
+
+    .mpsc-game .slot {
+        width: 34px;
+        height: 34px;
+        font-size: 18px;
+    }
+
+    .watch-game .rx-card {
+        width: 48%;
+        grid-template-columns: auto 1fr;
+        grid-template-areas: "id face" "btns btns";
+        row-gap: 4px;
+    }
+
+    .watch-game .rx-btns {
+        flex-wrap: wrap;
+        justify-content: flex-start;
+    }
+
+    .watch-game .watch-cell {
+        width: 13% !important;
+    }
+
+    /* the caption otherwise wraps to three lines and into the pill above */
+    .game-footer .dim {
+        font-size: 12px;
+    }
+
+    /* a long status and the game's name do not fit on one row; the slide
+       title already names the game */
+    .cycle-game .game-header,
+    .oneshot-game .game-header {
+        display: none;
+    }
 }
 
 /* ---- speedd: an actor architecture, stepped by hand ----
@@ -2677,6 +2806,43 @@ button.bd-actor:hover {
 .sd-camera .bd-head {
     font-size: 0.85em;
     font-weight: 400;
+}
+
+/* "created by the first ticket or subscription" on one line made a queue
+   that does not exist yet the widest thing in its column */
+.bd-uncreated .bd-hint {
+    white-space: normal;
+    max-width: 13em;
+    text-align: center;
+}
+
+/* On a narrow board the reporting inbox has about 160px between the
+   cameras and the Collector: empty slots shrink to fit it... */
+@container (max-width: 950px) {
+    .speedd-game .bd-slot {
+        min-width: 2.4em;
+    }
+
+    .speedd-game .bd-channel {
+        padding: 3px 4px;
+    }
+
+    /* "mpsc · dispatcher subscription" on one line reaches road 9's queue */
+    .speedd-game .bd-channel-title {
+        white-space: normal;
+        max-width: 11em;
+        text-align: center;
+    }
+}
+
+/* ...and full ones, labelled with plates, wrap into a second row rather
+   than spread over their neighbours */
+@container (max-width: 1500px) {
+    .speedd-game .bd-slots {
+        flex-wrap: wrap;
+        justify-content: center;
+        max-width: 13em;
+    }
 }
 
 /* seven cameras stacked 11.5% apart: on a short screen, drop the air
@@ -2900,6 +3066,19 @@ button.bd-actor:hover {
     .board-game .game-footer .dim {
         display: none;
     }
+
+    /* the status wraps to two lines and the game's name sits on top of it;
+       the slide title already names the game */
+    .board-game .game-header {
+        display: none;
+    }
+
+    /* the status wraps to two lines on a phone, and the footer's buttons
+       to two rows */
+    .board-game {
+        padding-top: 64px;
+        padding-bottom: 84px;
+    }
 }
 
 /* shared by the boards: a finished or closed actor */
@@ -2912,8 +3091,9 @@ button.bd-actor:hover {
 
 .ch-client {
     width: 22%;
-    /* the terminals are a quarter of the board apart, board padding aside */
-    max-height: calc(24cqh - 26px);
+    /* the terminals are 24% of the board apart; a percentage resolves
+       against the board, which they are positioned in */
+    max-height: 23%;
     align-items: stretch;
     text-align: left;
     border-color: var(--c);
@@ -2935,9 +3115,57 @@ button.bd-actor:hover {
 }
 
 .ch-line {
+    /* full height always: when the terminal is short the oldest lines go
+       off the top, rather than every line squashing into the next */
+    flex: none;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+}
+
+/* A short board leaves each terminal about 55px: the buttons share the
+   name's row so the newest line of the transcript still shows, and the
+   connections drop the air between their three lines. Only on a wide
+   board: on a narrow one the name would shrink to its first letter. */
+@container (max-height: 460px) and (min-width: 1000px) {
+    .ch-client {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        grid-template-rows: auto minmax(0, 1fr);
+        column-gap: 4px;
+        row-gap: 2px;
+        padding: 3px 6px;
+    }
+
+    .ch-client > .bd-head {
+        grid-column: 1;
+        grid-row: 1;
+        text-align: left;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .ch-client > .ch-typing {
+        grid-column: 2;
+        grid-row: 1;
+    }
+
+    .ch-client > .ch-transcript {
+        grid-column: 1 / -1;
+        grid-row: 2;
+        line-height: 1.15;
+    }
+
+    .ch-client > .bd-parked {
+        grid-column: 1 / -1;
+    }
+
+    .ch-conn {
+        padding: 2px 6px;
+        gap: 0;
+        line-height: 1.15;
+    }
 }
 
 .ch-typing {
