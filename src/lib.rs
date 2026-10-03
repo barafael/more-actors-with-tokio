@@ -256,7 +256,7 @@ pub fn Deck(mode: GameMode, initial_slide: usize) -> Element {
     rsx! {
         document::Link { rel: "icon", href: asset!("/assets/favicon.ico") }
         document::Link { rel: "stylesheet", href: asset!("/assets/main.css") }
-        document::Link { rel: "stylesheet", href: "https://fonts.googleapis.com/css2?family=Bitter:ital@0;1&family=Fira+Mono&family=Patrick+Hand&family=Space+Mono:wght@400;700&display=swap" }
+        document::Link { rel: "stylesheet", href: "https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible&family=Bitter:ital@0;1&family=Fira+Mono&family=Space+Mono:wght@400;700&display=swap" }
         div {
             class: "deck-root",
             // Focusable so `q` can be bound here rather than on the window,

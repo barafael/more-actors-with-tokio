@@ -252,7 +252,7 @@ pub fn MpscGame() -> Element {
     });
 
     rsx! {
-        div { class: "diagram",
+        div { class: "diagram mpsc-game",
             div { class: "game-header", "mpsc" }
             div { class: "status", "{conn.status}" }
 

@@ -234,7 +234,7 @@ pub fn BroadcastGame() -> Element {
     let occupancy = use_memo(move || chan.snap.read().buffer.len());
 
     rsx! {
-        div { class: "diagram",
+        div { class: "diagram broadcast-game",
             div { class: "game-header", "broadcast" }
             div { class: "status", "{conn.status}" }
 

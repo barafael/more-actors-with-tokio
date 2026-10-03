@@ -75,7 +75,6 @@ pub fn UnorderedGame() -> Element {
                             }
                         }
                     }
-                    button { class: "btn await", onclick: move |_| board.step(|s| s.click_next()), "next().await" }
                     div { class: "bd-doing", if set.parked { "parked: Pending" } else { "running" } }
                 }
 
@@ -104,6 +103,8 @@ pub fn UnorderedGame() -> Element {
 
                 div { class: "bd-actor fu-out", style: at_style(OUT),
                     div { class: "bd-head", "yielded" }
+                    // above the list, so it stays put as the results pile up
+                    button { class: "btn await", onclick: move |_| board.step(|s| s.click_next()), "next().await" }
                     div { class: "fu-yielded",
                         if set.yielded.is_empty() {
                             span { class: "bd-hint", "nothing yet" }

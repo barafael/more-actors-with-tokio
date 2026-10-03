@@ -78,7 +78,7 @@ fn page(title: &str, body: &str, nav: Option<&Nav>) -> String {
     format!(
         "<!doctype html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>{title}</title>\n\
          <meta name=\"game-mode\" content=\"local\">\n\
-         <link rel=\"stylesheet\" href=\"https://fonts.googleapis.com/css2?family=Bitter:ital@0;1&amp;family=Fira+Mono&amp;family=Patrick+Hand&amp;family=Space+Mono:wght@400;700&amp;display=swap\">\n\
+         <link rel=\"stylesheet\" href=\"https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible&amp;family=Bitter:ital@0;1&amp;family=Fira+Mono&amp;family=Space+Mono:wght@400;700&amp;display=swap\">\n\
          <link rel=\"stylesheet\" href=\"main.css\">\n\
          <script>{STREAMING_INIT}</script>\n\
          {nav_style}\

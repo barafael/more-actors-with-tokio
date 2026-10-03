@@ -208,7 +208,7 @@ pub fn WatchGame() -> Element {
     let pending = use_memo(move || snapshot().pending_send.is_some());
 
     rsx! {
-        div { class: "diagram",
+        div { class: "diagram watch-game",
             div { class: "game-header", "watch" }
             div { class: "status", "{conn.status}" }
 

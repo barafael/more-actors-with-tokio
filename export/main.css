@@ -14,8 +14,8 @@
     --ink: #3b382f;
     /* diagram labels and controls; code blocks pin Fira Mono themselves */
     --font-label: 'Space Mono', 'Fira Mono', monospace;
-    /* hand-annotated margin notes */
-    --font-hand: 'Patrick Hand', 'Bitter', cursive;
+    /* margin notes: what a game is doing now, legible at hint size */
+    --font-note: 'Atkinson Hyperlegible', 'Bitter', sans-serif;
 }
 
 * {
@@ -212,10 +212,14 @@ strong {
     --t-body: clamp(11px, 2.4cqh, 15px);
     --t-state: clamp(13px, 3.2cqh, 21px);
     --t-big: clamp(18px, 5cqh, 32px);
-    /* How much a centred stage grows on a wide screen. The stage games
-       draw at their natural size, which leaves a projector's box mostly
-       empty; transform keeps layout and clicks where they were. */
-    --stage-scale: 1.25;
+    /* How much a centred stage grows within its game, once there is room
+       for it (see --fill below). zoom rather than transform, so the grown
+       stage takes up the room it draws in and pushes, wraps or clips like
+       any other box. */
+    --stage-scale: 1;
+    /* See --fill below: the whole game is drawn as if on a smaller screen,
+       then magnified, and a sparse game (--dens) a little more. */
+    zoom: calc(var(--fill) * var(--dens, 1));
     position: relative;
     margin-top: 0.6rem;
     border: 2px solid rgba(51, 51, 51, 0.25);
@@ -230,6 +234,92 @@ strong {
         linear-gradient(to bottom, rgba(235, 91, 32, 0.1) 1px, transparent 1.5px);
     background-size: 40px 40px;
     overflow: hidden;
+}
+
+/* How much a game is magnified on a big screen. The games are laid out in
+   px, and their boxes settle best when the diagram is about 460px tall:
+   shorter and pieces collide, taller and they float in empty space. On a
+   1080p projector the diagram is ~630px, so the game lays out at ~470px
+   and zooms up to fill it. Stepped, because a zoom cannot be computed from
+   a length; wide screens only, because a 4:3 box is already narrow. */
+:root {
+    --fill: 1;
+}
+
+@media (min-height: 880px) and (min-aspect-ratio: 3/2) {
+    :root {
+        --fill: 1.1;
+    }
+
+    .diagram {
+        --stage-scale: 1.25;
+    }
+
+    /* How much further each game can grow before its pieces meet, found
+       by measuring each at 900p and 1080p. The sparse ones get the most;
+       the dense ones (and those that already fill their box) get none. */
+    .timer-game,
+    .loop-select-game,
+    .select-game,
+    .watchdog-game,
+    .call-game {
+        --dens: 1.1;
+    }
+
+    .oneshot-game,
+    .watch-game,
+    .pipeline-game {
+        --dens: 1.2;
+    }
+
+    .mpsc-game,
+    .cycle-game,
+    .broadcast-game {
+        --dens: 1.3;
+    }
+
+    .unordered-game {
+        --dens: 1.4;
+    }
+}
+
+@media (min-height: 960px) and (min-aspect-ratio: 3/2) {
+    :root {
+        --fill: 1.2;
+    }
+}
+
+@media (min-height: 1040px) and (min-aspect-ratio: 3/2) {
+    :root {
+        --fill: 1.35;
+    }
+}
+
+@media (min-height: 1150px) and (min-aspect-ratio: 3/2) {
+    :root {
+        --fill: 1.5;
+    }
+}
+
+@media (min-height: 1300px) and (min-aspect-ratio: 3/2) {
+    :root {
+        --fill: 1.75;
+    }
+}
+
+/* The dense boards already fill their box and would collide if drawn
+   smaller and magnified. */
+.chat-game,
+.speedd-game {
+    zoom: 1;
+}
+
+/* The frame around a game (its label, its status, its footer) keeps one
+   size from slide to slide, whatever the game's own density. */
+.diagram > .status,
+.diagram > .game-header,
+.diagram > .game-footer {
+    zoom: calc(1 / var(--dens, 1));
 }
 
 .game-header {
@@ -772,7 +862,7 @@ strong {
    explicit size it inherited the deck's projection-scaled body text and
    collided with the pills and tape stacked above it */
 .game-footer .dim {
-    font: 400 clamp(14px, 4cqh, 26px) / 1.3 var(--font-hand);
+    font: 400 clamp(14px, 4cqh, 26px) / 1.3 var(--font-note);
     color: var(--color-dimmed);
 }
 
@@ -1349,10 +1439,23 @@ strong {
     transform: translate(-50%, -58%);
 }
 
-/* the dial's size follows the box rather than a fixed 220px */
+/* the dial's size follows the box rather than a fixed 220px, and it sits
+   left of centre so the readout can stand beside it: below it, the two
+   fought over the box's height while its width went unused */
 .timer-game .timer-dial {
-    width: 52cqh;
-    height: 52cqh;
+    width: 64cqh;
+    height: 64cqh;
+    left: 42%;
+    transform: translate(-50%, -50%);
+}
+
+.timer-game .timer-readout {
+    left: calc(42% + 32cqh + 28px);
+    right: auto;
+    top: 50%;
+    bottom: auto;
+    transform: translateY(-50%);
+    justify-content: flex-start;
 }
 
 .dial-face {
@@ -1449,6 +1552,20 @@ strong {
     z-index: 5;
 }
 
+/* select has no tape below its race, so it can sit dead centre, clear of
+   the button in the corner */
+.select-game .race {
+    transform: translate(-50%, -50%);
+}
+
+/* loop-select's race sits between the corner button and the tape, and on
+   a short screen there is not room for it at full size */
+@container (max-height: 460px) {
+    .loop-select-game .race {
+        zoom: 0.85;
+    }
+}
+
 .race-branch {
     min-width: clamp(190px, 26cqw, 320px);
     padding: clamp(0.9rem, 4cqh, 1.6rem) 1.1rem;
@@ -1539,7 +1656,7 @@ strong {
 }
 
 .tape.empty {
-    font: 400 clamp(16px, 5cqh, 30px) var(--font-hand);
+    font: 400 clamp(16px, 5cqh, 30px) var(--font-note);
     color: var(--color-dimmed);
 }
 
@@ -1601,6 +1718,22 @@ strong {
     .select-game .timer-dial {
         transform: translate(-50%, -58%) scale(0.8);
     }
+
+    /* no width for the readout beside the dial: back underneath it */
+    .timer-game .timer-dial {
+        left: 50%;
+        width: 52cqh;
+        height: 52cqh;
+    }
+
+    .timer-game .timer-readout {
+        left: 0;
+        right: 0;
+        top: auto;
+        bottom: 52px;
+        transform: none;
+        justify-content: center;
+    }
 }
 
 /* ---- the actor recipe: the rules, in words ---- */
@@ -1613,7 +1746,9 @@ strong {
 .recipe-rules {
     margin: 1em 0 0;
     padding-left: 1.1em;
-    font-size: 1rem;
+    /* rem stops shrinking at 823px; the text slides must keep shrinking or
+       they spill off the bottom of a 900p screen */
+    font-size: min(1rem, 3.7vh);
     line-height: 1.45;
 }
 
@@ -1893,7 +2028,7 @@ strong {
 .ut-note {
     margin: 0;
     min-height: 2.7em;
-    font: 400 clamp(14px, 3.1cqh, 26px) / 1.3 var(--font-hand);
+    font: 400 clamp(14px, 3.1cqh, 26px) / 1.3 var(--font-note);
     color: var(--ink);
 }
 
@@ -1974,7 +2109,7 @@ strong {
 }
 
 .mx-empty {
-    font: 400 var(--t-state) var(--font-hand);
+    font: 400 var(--t-state) var(--font-note);
     color: var(--color-dimmed);
 }
 
@@ -2076,8 +2211,9 @@ strong {
 /* ---- mutex ---- */
 
 .mx-stage {
+    /* no min-height: 0, so a full queue pushes the controls down rather
+       than spilling over them */
     flex: 1;
-    min-height: 0;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -2085,13 +2221,26 @@ strong {
     gap: 14px;
 }
 
+/* On a short screen that push would reach past the box, so the stage packs
+   tighter instead. */
+@container (max-height: 400px) {
+    .mutex-game,
+    .mx-stage {
+        gap: 6px;
+    }
+
+    .mx-lock {
+        padding: 4px 14px;
+        gap: 2px;
+    }
+}
+
 /* the centred stages draw at natural size and are scaled up as one */
 .mx-stage,
 .cr-stage,
 .os-stage,
 .cy-stage {
-    transform: scale(var(--stage-scale));
-    transform-origin: center;
+    zoom: var(--stage-scale);
 }
 
 .mx-queue {
@@ -2194,6 +2343,9 @@ strong {
 .os-stage {
     flex: 1;
     min-height: 0;
+    /* headroom for the create button in the corner, which the zoomed
+       sender box would otherwise reach */
+    padding-top: 36px;
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
     align-items: center;
@@ -2237,7 +2389,7 @@ strong {
 }
 
 .os-handle-state {
-    font: 400 var(--t-state) var(--font-hand);
+    font: 400 var(--t-state) var(--font-note);
 }
 
 .os-actions {
@@ -2354,7 +2506,7 @@ strong {
     border-top: none;
     text-align: center;
     padding-top: 8px;
-    font: 400 var(--t-state) var(--font-hand);
+    font: 400 var(--t-state) var(--font-note);
     color: var(--color-dimmed);
 }
 
@@ -2374,7 +2526,7 @@ strong {
     margin: 0.8em 0 0;
     padding: 0.4em 0 0.4em 1em;
     border-left: 6px solid var(--color-highlight);
-    font: italic 400 1.15rem/1.4 'Bitter', serif;
+    font: italic 400 min(1.15rem, 4.25vh)/1.4 'Bitter', serif;
 }
 
 .kay-quote footer {
@@ -2388,7 +2540,7 @@ strong {
     grid-template-columns: max-content 1fr;
     gap: 0.5em 1.2em;
     margin-top: 1.2em;
-    font-size: 0.82rem;
+    font-size: min(0.82rem, 3.04vh);
 }
 
 .kay-row {
@@ -2511,7 +2663,7 @@ button.bd-actor:hover {
 }
 
 .bd-doing {
-    font: 400 var(--t-state) var(--font-hand);
+    font: 400 var(--t-state) var(--font-note);
     white-space: nowrap;
 }
 
@@ -2525,6 +2677,28 @@ button.bd-actor:hover {
 .sd-camera .bd-head {
     font-size: 0.85em;
     font-weight: 400;
+}
+
+/* seven cameras stacked 11.5% apart: on a short screen, drop the air
+   between their lines or they overlap */
+@container (max-height: 460px) {
+    .sd-camera,
+    .sd-dispatcher {
+        padding: 1px 4px;
+        gap: 0;
+    }
+
+    .sd-camera .bd-head,
+    .sd-dispatcher .bd-head,
+    .sd-dispatcher .bd-doing,
+    .sd-camera .bd-chip {
+        line-height: 1.1;
+    }
+
+    .sd-camera .bd-chip {
+        padding-top: 0;
+        padding-bottom: 0;
+    }
 }
 
 .sd-cars {
@@ -2620,7 +2794,7 @@ button.bd-actor:hover {
 }
 
 .bd-hint {
-    font: 400 var(--t-label) var(--font-hand);
+    font: 400 var(--t-label) var(--font-note);
     color: var(--color-dimmed);
 }
 
@@ -2738,13 +2912,21 @@ button.bd-actor:hover {
 
 .ch-client {
     width: 22%;
+    /* the terminals are a quarter of the board apart, board padding aside */
+    max-height: calc(24cqh - 26px);
     align-items: stretch;
     text-align: left;
     border-color: var(--c);
 }
 
 .ch-transcript {
-    min-height: 5.2em;
+    /* shrinks with its terminal; the newest lines stay in view */
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
     padding: 2px 5px;
     border: 1px solid #e8dfc0;
     background: #fff;
@@ -2840,7 +3022,9 @@ button.bd-actor:hover {
 /* the watchdog's two branches are the select slide's, drawn larger */
 .wd-actor .race-branch {
     min-width: clamp(190px, 18cqw, 300px);
-    padding: clamp(0.9rem, 4cqh, 1.6rem) 1.1rem;
+    /* px and cqh, not rem: a rem floor follows the slide's text and left
+       the actor too tall for its board on a short screen */
+    padding: clamp(8px, 3cqh, 18px) 16px;
 }
 
 .wd-actor.running {
@@ -2988,6 +3172,7 @@ button.bd-actor:hover {
     width: 20%;
     min-height: 36%;
     justify-content: flex-start;
+    gap: 8px;
     padding: 10px 12px;
 }
 
