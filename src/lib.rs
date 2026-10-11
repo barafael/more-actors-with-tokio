@@ -1,3 +1,6 @@
+// Dioxus rsx string literals trip this lint on every span.
+#![allow(clippy::useless_format)]
+
 pub mod clock;
 pub mod games;
 pub mod highlight;
