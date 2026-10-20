@@ -76,9 +76,9 @@ deck! {
 pub fn Title() -> Element {
     rsx! {
         div { class: "slide lead",
-            h1 { "Actors with Tokio" }
-            h2 { "The slides run the system they describe" }
-            p { class: "dim", "You are the senders." }
+            h1 { "More Actors with Tokio" }
+            h3 { "Or: how not to " code { "Arc<Mutex<T>>" } }
+            h4 { "(and " i { "why" } ")" }
         }
     }
 }
@@ -89,8 +89,8 @@ pub fn Title() -> Element {
 pub fn MutexGameSlide() -> Element {
     rsx! {
         div { class: "slide",
-            h2 { "Arc<Mutex<T>>" }
-            p { class: "dim", "Safe: only the guard's holder can touch the value. That is all it buys; everyone else waits as long as the holder likes." }
+            h2 { code { "Arc<Mutex<T>>" }}
+            p { class: "dim", "Shared (Arc) Synchronized Mutability (Mutex)." }
             MutexGame {}
         }
     }
@@ -103,7 +103,7 @@ pub fn TimerGameSlide() -> Element {
     rsx! {
         div { class: "slide",
             h2 { "A future that waits" }
-            p { class: "dim", "It yields nothing until the seconds reach a multiple of ten, then how long it waited. Nobody in this room makes that happen." }
+            p { class: "dim", "Yields the number of seconds until a multiple of ten was reached." }
             TimerGame {}
         }
     }

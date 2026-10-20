@@ -116,7 +116,7 @@ pub fn TimerGame() -> Element {
                 match (snapshot.pending, snapshot.waited_s) {
                     (true, _) => rsx! {
                         span { class: "note-pill pending",
-                            "awaiting… resolves in {seconds(snapshot.remaining_ms.unwrap_or(0.0))}s"
+                            "awaiting..."
                         }
                     },
                     (false, Some(waited)) => rsx! {

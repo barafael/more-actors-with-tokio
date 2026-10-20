@@ -130,7 +130,6 @@ pub fn MutexGame() -> Element {
 
             div { class: "mx-stage",
                 div { class: "mx-queue",
-                    span { class: "mx-caption", "parked in lock().await — first come, first served" }
                     div { class: "mx-chips",
                         if snap.waiters.is_empty() {
                             span { class: "mx-empty", "nobody waiting" }
