@@ -264,6 +264,7 @@ strong {
     .timer-game,
     .loop-select-game,
     .select-game,
+    .spawn-game,
     .watchdog-game,
     .call-game {
         --dens: 1.1;
@@ -1640,6 +1641,63 @@ strong {
     z-index: 10;
 }
 
+/* The spawned race: the same select, drawn inside the task that runs it,
+   with the JoinHandle the caller keeps underneath. */
+
+.task-frame {
+    position: absolute;
+    top: 44%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    padding: 0.8rem 1.2rem 1rem;
+    border: 2px dashed rgba(51, 51, 51, 0.35);
+    background: rgba(252, 248, 238, 0.6);
+    z-index: 5;
+}
+
+/* the race inside is the select slide's at full size, and the frame
+   around it needs the room that the select slide leaves empty; a phone
+   restacks the race instead (see the max-width rules) */
+@media (min-width: 701px) {
+    .task-frame {
+        zoom: 0.75;
+    }
+}
+
+.task-frame.live {
+    border-style: solid;
+    border-color: var(--color-highlight);
+}
+
+.task-head {
+    font: 600 var(--t-label) var(--font-label);
+    color: var(--color-dimmed);
+    margin-bottom: 0.8rem;
+    white-space: nowrap;
+}
+
+/* the select's result is the task's output, which the handle already
+   reports; a second pill saying the same thing only crowds the frame */
+.spawn-game .race-result {
+    display: none;
+}
+
+.join-handle {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 52px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 0.8rem;
+    z-index: 10;
+}
+
+.join-handle code {
+    font: bold var(--t-body) var(--font-label);
+}
+
 /* The loop's tape of completed rounds, newest last. */
 
 .loop-select-game .race {
@@ -2658,6 +2716,10 @@ strong {
     .button-game,
     .select-game {
         min-height: 480px;
+    }
+
+    .spawn-game {
+        min-height: 560px;
     }
 
     .loop-select-game {

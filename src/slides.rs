@@ -9,7 +9,7 @@ use crate::games::mpsc::MpscGame;
 use crate::games::mutex::MutexGame;
 use crate::games::oneshot::OneshotGame;
 use crate::games::pipeline::PipelineGame;
-use crate::games::select::{LoopSelectGame, SelectGame};
+use crate::games::select::{LoopSelectGame, SelectGame, SpawnGame};
 use crate::games::speedd::SpeeddGame;
 use crate::games::timer::TimerGame;
 use crate::games::unit_test::UnitTestGame;
@@ -53,6 +53,7 @@ deck! {
     ("timer", TimerGameSlide),
     ("button-future", ButtonGameSlide),
     ("select", SelectGameSlide),
+    ("spawn", SpawnGameSlide),
     ("loop-select", LoopSelectGameSlide),
     ("watchdog", WatchdogSlide),
     ("recipe", Recipe),
@@ -116,6 +117,19 @@ pub fn SelectGameSlide() -> Element {
             h2 { "The select! macro" }
             p { class: "dim", "Two futures, awaited together. The first to complete wins; the other is dropped mid-flight, never resumed." }
             SelectGame {}
+        }
+    }
+}
+
+/// The race from §3, handed to `tokio::spawn`: the same future, now a task
+/// the caller holds only a handle to.
+#[component]
+pub fn SpawnGameSlide() -> Element {
+    rsx! {
+        div { class: "slide",
+            h2 { "Spawning the select" }
+            p { class: "dim", "The same race, moved into a task. tokio::spawn runs it on its own and hands back a JoinHandle, which resolves to whatever the select yielded." }
+            SpawnGame {}
         }
     }
 }

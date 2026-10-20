@@ -23,7 +23,7 @@ use common::{
 use futures_util::StreamExt;
 use more_actors_with_tokio::protocol::{
     Color, LoopSelectEvent, LoopSelectSnapshot, LoopSelectWire, SelectEvent, SelectSnapshot,
-    SelectWire, TimerEvent, TimerSnapshot, TimerWire, Won,
+    SelectWire, SpawnEvent, SpawnSnapshot, SpawnWire, TimerEvent, TimerSnapshot, TimerWire, Won,
 };
 use tokio_tungstenite::tungstenite::Message;
 
@@ -199,6 +199,44 @@ async fn the_button_branch_wins_the_select_and_drops_the_timer() {
     let settled = select_snapshot(&mut socket).await;
     assert!(!settled.armed, "the select was left");
     assert_eq!(settled.winner, Some(Won::Button { color: Color::Red }));
+}
+
+async fn spawn_snapshot(socket: &mut Socket) -> SpawnSnapshot {
+    next_event(socket, |event: SpawnEvent| match event {
+        SpawnEvent::Snapshot { state } => Some(state),
+        _ => None,
+    })
+    .await
+}
+
+#[tokio::test]
+async fn a_spawned_select_finishes_its_handle_with_the_winner() {
+    let _guard = env_guard().await;
+    let base = serve().await;
+    let (_app, ticket) = take_ticket(&base).await;
+    let mut socket = connect_as_player(&base, "/ws/game/spawn", &ticket).await;
+    assert_eq!(spawn_snapshot(&mut socket).await.task, None);
+
+    send(&mut socket, &SpawnWire::Spawn).await;
+    let running = spawn_snapshot(&mut socket).await;
+    assert_eq!(running.task, Some(1));
+    assert!(running.select.armed, "the task is in its select");
+
+    send(
+        &mut socket,
+        &SpawnWire::Press {
+            color: Color::Green,
+        },
+    )
+    .await;
+    let finished = spawn_snapshot(&mut socket).await;
+    assert!(!finished.select.armed, "the task returned");
+    assert_eq!(
+        finished.select.winner,
+        Some(Won::Button {
+            color: Color::Green
+        }),
+    );
 }
 
 #[tokio::test]

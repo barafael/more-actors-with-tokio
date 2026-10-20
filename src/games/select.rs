@@ -1,5 +1,5 @@
-//! The select minigames: CONCEPT.md §3 (one race) and §4 (the race in a
-//! loop).
+//! The select minigames: CONCEPT.md §3 (one race), the race spawned as a
+//! task, and §4 (the race in a loop).
 //!
 //! Both slides draw the same picture — two futures side by side, the winner
 //! underneath — so the picture is one component, [`Race`], and the two games
@@ -14,9 +14,9 @@ use crate::games::ticker::{subscribe, use_clock, use_local_tick};
 use crate::games::{use_game_connection, GameConnection};
 use crate::protocol::{
     Color, Game, LoopSelectEvent, LoopSelectSnapshot, LoopSelectWire, SelectEvent, SelectSnapshot,
-    SelectWinner, SelectWire, TimerSnapshot, Won,
+    SelectWinner, SelectWire, SpawnEvent, SpawnSnapshot, SpawnWire, TimerSnapshot, Won,
 };
-use crate::sim_timer::{LoopSelectSim, SelectSim};
+use crate::sim_timer::{LoopSelectSim, SelectSim, SpawnSim};
 use crate::{AppCtx, GameMode};
 
 // ---- the shared picture ----
@@ -234,6 +234,151 @@ pub fn SelectGame() -> Element {
                     button {
                         class: "btn",
                         onclick: move |_| restart_select(conn, ctx, sim, state),
+                        "restart"
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ---- the race, spawned ----
+
+fn apply_spawn(mut state: Signal<SpawnSnapshot>, event: SpawnEvent) {
+    if let SpawnEvent::Snapshot { state: new } = event {
+        state.set(new);
+    }
+}
+
+/// Republish the local sim's state, for the paths that changed it.
+fn publish_spawn(sim: Signal<SpawnSim>, state: Signal<SpawnSnapshot>) {
+    apply_spawn(
+        state,
+        SpawnEvent::Snapshot {
+            state: sim.read().snapshot(),
+        },
+    );
+}
+
+fn dispatch_spawn(
+    conn: GameConnection,
+    mut sim: Signal<SpawnSim>,
+    state: Signal<SpawnSnapshot>,
+    wire: SpawnWire,
+) {
+    if conn.is_local() {
+        sim.with_mut(|sim| {
+            sim.sync_now(crate::sim::now_ms());
+            sim.handle(&wire);
+        });
+        publish_spawn(sim, state);
+    } else {
+        conn.send(&wire);
+    }
+}
+
+/// Restart the spawn game: a fresh actor remotely, a fresh sim locally.
+fn restart_spawn(
+    conn: GameConnection,
+    ctx: AppCtx,
+    mut sim: Signal<SpawnSim>,
+    mut state: Signal<SpawnSnapshot>,
+) {
+    if conn.is_local() {
+        sim.set(SpawnSim::new(wall_offset_ms()));
+        state.set(SpawnSnapshot::default());
+        conn.set_status("single-player");
+    } else {
+        ctx.send(crate::AppUp::Restart { game: Game::Spawn });
+    }
+}
+
+#[component]
+pub fn SpawnGame() -> Element {
+    let ctx: AppCtx = use_context();
+    let mode = use_context::<GameMode>();
+    let state = use_signal(SpawnSnapshot::default);
+    let sim = use_signal(|| SpawnSim::new(wall_offset_ms()));
+
+    let conn =
+        use_game_connection::<SpawnEvent>("/ws/game/spawn", move |event| apply_spawn(state, event));
+
+    let clock = use_clock();
+    // as in `SelectGame`: the tick that decides the race is the one the
+    // guarded effect below can no longer see
+    use_local_tick(sim, clock, move |event| {
+        apply_spawn(state, event);
+        publish_spawn(sim, state);
+    });
+    use_effect(move || {
+        subscribe(clock);
+        if mode == GameMode::Local && sim.peek().next_delay_ms().is_some() {
+            publish_spawn(sim, state);
+        }
+    });
+
+    let snapshot = state();
+    let enabled = conn.connected() && ctx.may_play();
+    let running = snapshot.select.armed;
+
+    rsx! {
+        div { class: "diagram spawn-game",
+            div { class: "game-header", "tokio::spawn" }
+            div { class: "status", "{conn.status}" }
+
+            div { class: if snapshot.task.is_some() { "task-frame live" } else { "task-frame" },
+                div { class: "task-head",
+                    match snapshot.task {
+                        Some(task) => rsx! { "task #{task}: async move {{ select! {{ .. }} }}" },
+                        None => rsx! { "async move {{ select! {{ .. }} }}" },
+                    }
+                }
+                Race {
+                    snapshot: snapshot.select,
+                    enabled,
+                    on_press: move |color| dispatch_spawn(
+                        conn, sim, state, SpawnWire::Press { color },
+                    ),
+                }
+            }
+
+            div { class: "join-handle",
+                code { "JoinHandle<Won>" }
+                match (snapshot.task, snapshot.select.winner) {
+                    (None, _) => rsx! {
+                        span { class: "note-pill", "not spawned yet" }
+                    },
+                    (Some(_), Some(Won::Timer { waited_s })) => rsx! {
+                        span { class: "note-pill resolved",
+                            ".await → Ok(Timer({waited_s:.0}s))"
+                        }
+                    },
+                    (Some(_), Some(Won::Button { color })) => rsx! {
+                        span { class: "note-pill resolved {color.css_name()}",
+                            ".await → Ok({color.display()})"
+                        }
+                    },
+                    (Some(_), None) => rsx! {
+                        span { class: "note-pill pending", "is_finished() == false" }
+                    },
+                }
+            }
+
+            div { class: "create-row",
+                button {
+                    class: "btn await",
+                    disabled: !enabled || running,
+                    onclick: move |_| dispatch_spawn(conn, sim, state, SpawnWire::Spawn),
+                    "tokio::spawn"
+                }
+            }
+
+            div { class: "game-footer",
+                span { class: "dim", "the task runs on its own; the handle is how you hear back" }
+                if ctx.may_present() {
+                    button {
+                        class: "btn",
+                        onclick: move |_| restart_spawn(conn, ctx, sim, state),
                         "restart"
                     }
                 }

@@ -1,4 +1,4 @@
-//! The three clock-driven games, as [`TickingGame`] impls.
+//! The four clock-driven games, as [`TickingGame`] impls.
 //!
 //! Each is a handful of lines because the actor body, the supervisor and the
 //! socket relay are all in [`super::ticking`]. What is left here is the part
@@ -9,15 +9,17 @@ use axum::extract::ws::{WebSocket, WebSocketUpgrade};
 use axum::response::Response;
 
 use crate::protocol::{
-    LoopSelectEvent, LoopSelectWire, SelectEvent, SelectWire, TimerEvent, TimerWire,
+    LoopSelectEvent, LoopSelectWire, SelectEvent, SelectWire, SpawnEvent, SpawnWire, TimerEvent,
+    TimerWire,
 };
 use crate::server::auth::Connecting;
 use crate::server::ticking::{handle_socket, TickingGame, TickingHandles};
 use crate::server::AppState;
-use crate::sim_timer::{LoopSelectSim, SelectSim, TimerSim};
+use crate::sim_timer::{LoopSelectSim, SelectSim, SpawnSim, TimerSim};
 
 pub type TimerHandles = TickingHandles<TimerSim>;
 pub type SelectHandles = TickingHandles<SelectSim>;
+pub type SpawnHandles = TickingHandles<SpawnSim>;
 pub type LoopSelectHandles = TickingHandles<LoopSelectSim>;
 
 impl TickingGame for TimerSim {
@@ -57,6 +59,27 @@ impl TickingGame for SelectSim {
 
     fn snapshot_event(&self) -> SelectEvent {
         SelectEvent::Snapshot {
+            state: self.snapshot(),
+        }
+    }
+}
+
+impl TickingGame for SpawnSim {
+    type Ev = SpawnEvent;
+    type Wire = SpawnWire;
+
+    const NAME: &'static str = "spawn";
+
+    fn fresh(epoch_offset_ms: f64) -> Self {
+        SpawnSim::new(epoch_offset_ms)
+    }
+
+    fn handle(&mut self, wire: &SpawnWire) -> Vec<SpawnEvent> {
+        SpawnSim::handle(self, wire)
+    }
+
+    fn snapshot_event(&self) -> SpawnEvent {
+        SpawnEvent::Snapshot {
             state: self.snapshot(),
         }
     }
@@ -103,6 +126,16 @@ pub async fn select_socket(
 ) -> Response {
     ws.on_upgrade(move |socket: WebSocket| {
         handle_socket::<SelectSim>(socket, state, connecting, |app| app.select.handles())
+    })
+}
+
+pub async fn spawn_socket(
+    ws: WebSocketUpgrade,
+    connecting: Connecting,
+    axum::extract::State(state): axum::extract::State<AppState>,
+) -> Response {
+    ws.on_upgrade(move |socket: WebSocket| {
+        handle_socket::<SpawnSim>(socket, state, connecting, |app| app.spawn.handles())
     })
 }
 

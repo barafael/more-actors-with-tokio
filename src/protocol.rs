@@ -85,6 +85,7 @@ pub enum Game {
     Timer,
     Button,
     Select,
+    Spawn,
     LoopSelect,
     Mutex,
     Mpsc,
@@ -583,6 +584,36 @@ pub struct LoopSelectSnapshot {
     /// Clearing the tape does not reset this: `SelectWinner.round` is the
     /// client's list key and must never be reused.
     pub rounds: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum SpawnWire {
+    /// `tokio::spawn` the select, which hands back a `JoinHandle`.
+    Spawn,
+    Press {
+        color: Color,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum SpawnEvent {
+    Snapshot {
+        state: SpawnSnapshot,
+    },
+    Spawned {
+        task: u64,
+    },
+    /// What the select inside the task did.
+    Select(SelectEvent),
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+pub struct SpawnSnapshot {
+    /// The id of the last spawned task, whose `JoinHandle` the slide holds.
+    pub task: Option<u64>,
+    /// The select the task runs. Its winner is the task's output: the
+    /// handle is finished exactly when the select has been decided.
+    pub select: SelectSnapshot,
 }
 
 // ---- mutex: the hook ----

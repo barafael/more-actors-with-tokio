@@ -11,7 +11,7 @@ use crate::protocol::{AppDown, AppUp, Game, KEEPALIVE, SLIDE_COUNT};
 use crate::server::auth::{Connecting, Joining};
 use crate::server::broadcast::BroadcastHandles;
 use crate::server::button::ButtonHandles;
-use crate::server::futures_games::{LoopSelectHandles, SelectHandles, TimerHandles};
+use crate::server::futures_games::{LoopSelectHandles, SelectHandles, SpawnHandles, TimerHandles};
 use crate::server::mpsc::MpscHandles;
 use crate::server::room_games::{CallHandles, MutexHandles};
 use crate::server::tickets::Tickets;
@@ -80,11 +80,12 @@ pub struct Planes {
     pub slide_tx: tokio_watch::Sender<usize>,
     /// The player-ticket pool: who in the room holds a handle.
     pub tickets: Tickets,
-    /// The three clock-driven games (CONCEPT.md §2–§4), which resolve on
+    /// The clock-driven games (CONCEPT.md §2–§4), which resolve on
     /// their own as well as on a wire.
     pub timer: GamePlane<TimerHandles>,
     pub button: GamePlane<ButtonHandles>,
     pub select: GamePlane<SelectHandles>,
+    pub spawn: GamePlane<SpawnHandles>,
     pub loop_select: GamePlane<LoopSelectHandles>,
     /// The hook (CONCEPT.md §1) and call-and-response (§7): the games
     /// where who acts, and who leaves, matters.
@@ -113,6 +114,7 @@ impl AppState {
             timer: plane(ticking::backend),
             button: plane(button::backend),
             select: plane(ticking::backend),
+            spawn: plane(ticking::backend),
             loop_select: plane(ticking::backend),
             mutex: plane(room::backend),
             call: plane(room::backend),
@@ -127,6 +129,7 @@ impl AppState {
             Game::Timer => &self.timer,
             Game::Button => &self.button,
             Game::Select => &self.select,
+            Game::Spawn => &self.spawn,
             Game::LoopSelect => &self.loop_select,
             Game::Mutex => &self.mutex,
             Game::Mpsc => &self.mpsc,
@@ -213,6 +216,10 @@ pub fn game_routes() -> axum::Router<AppState> {
         .route(
             "/ws/game/select",
             axum::routing::get(futures_games::select_socket),
+        )
+        .route(
+            "/ws/game/spawn",
+            axum::routing::get(futures_games::spawn_socket),
         )
         .route(
             "/ws/game/loop-select",

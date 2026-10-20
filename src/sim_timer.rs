@@ -10,8 +10,8 @@
 use crate::clock::Ticking;
 use crate::protocol::{
     ButtonWire, LoopSelectEvent, LoopSelectSnapshot, LoopSelectWire, SelectEvent, SelectSnapshot,
-    SelectWinner, SelectWire, TimerEvent, TimerSnapshot, TimerWire, Won, LOOP_SELECT_HISTORY,
-    TIMER_PERIOD_S,
+    SelectWinner, SelectWire, SpawnEvent, SpawnSnapshot, SpawnWire, TimerEvent, TimerSnapshot,
+    TimerWire, Won, LOOP_SELECT_HISTORY, TIMER_PERIOD_S,
 };
 use crate::sim::ButtonSim;
 
@@ -442,6 +442,86 @@ impl Ticking for LoopSelectSim {
     }
 }
 
+/// The same select, handed to `tokio::spawn`: the future now runs as a task
+/// on its own, and the caller keeps only the `JoinHandle`.
+///
+/// Nothing about the race changes. What the slide adds is the handle: it is
+/// pending while the select is live and finished, with the winner as its
+/// output, once the select is decided.
+pub struct SpawnSim {
+    select: SelectSim,
+    /// Tasks spawned since the actor started, which is also the newest
+    /// task's id.
+    spawned: u64,
+}
+
+impl Default for SpawnSim {
+    fn default() -> Self {
+        Self::new(0.0)
+    }
+}
+
+impl SpawnSim {
+    pub fn new(epoch_offset_ms: f64) -> Self {
+        Self {
+            select: SelectSim::new(epoch_offset_ms),
+            spawned: 0,
+        }
+    }
+
+    pub fn handle(&mut self, wire: &SpawnWire) -> Vec<SpawnEvent> {
+        match wire {
+            // One task at a time: a second spawn would drop the first
+            // handle and detach a task the slide could no longer show.
+            SpawnWire::Spawn if self.select.armed() => Vec::new(),
+            SpawnWire::Spawn => {
+                self.spawned += 1;
+                let mut events = vec![SpawnEvent::Spawned { task: self.spawned }];
+                events.extend(
+                    self.select
+                        .handle(&SelectWire::Arm)
+                        .into_iter()
+                        .map(SpawnEvent::Select),
+                );
+                events
+            }
+            SpawnWire::Press { color } => self
+                .select
+                .handle(&SelectWire::Press { color: *color })
+                .into_iter()
+                .map(SpawnEvent::Select)
+                .collect(),
+        }
+    }
+
+    pub fn snapshot(&self) -> SpawnSnapshot {
+        SpawnSnapshot {
+            task: (self.spawned > 0).then_some(self.spawned),
+            select: self.select.snapshot(),
+        }
+    }
+}
+
+impl Ticking for SpawnSim {
+    type Event = SpawnEvent;
+
+    fn sync_now(&mut self, now_ms: f64) {
+        self.select.sync_now(now_ms);
+    }
+
+    fn next_delay_ms(&self) -> Option<f64> {
+        self.select.next_delay_ms()
+    }
+
+    fn poll_due(&mut self) -> Vec<SpawnEvent> {
+        self.select
+            .poll_due()
+            .into_iter()
+            .map(SpawnEvent::Select)
+            .collect()
+    }
+}
+
 #[cfg(test)]
 mod timer_tests {
     use super::*;
@@ -840,6 +920,73 @@ mod loop_select_tests {
         assert!(
             snapshot.running,
             "clearing the tape does not break the loop"
+        );
+    }
+}
+
+#[cfg(test)]
+mod spawn_tests {
+    use super::*;
+    use crate::protocol::Color;
+
+    #[test]
+    fn nothing_is_spawned_until_asked() {
+        let spawn = SpawnSim::new(0.0);
+        assert_eq!(spawn.snapshot().task, None);
+        assert_eq!(spawn.next_delay_ms(), None);
+    }
+
+    #[test]
+    fn spawning_hands_back_a_pending_handle() {
+        let mut spawn = SpawnSim::new(0.0);
+        spawn.sync_now(0.0);
+        assert_eq!(
+            spawn.handle(&SpawnWire::Spawn),
+            vec![
+                SpawnEvent::Spawned { task: 1 },
+                SpawnEvent::Select(SelectEvent::Armed),
+            ],
+        );
+        let snapshot = spawn.snapshot();
+        assert_eq!(snapshot.task, Some(1));
+        assert!(snapshot.select.armed, "the task is running the select");
+    }
+
+    #[test]
+    fn a_second_spawn_waits_for_the_first_task() {
+        let mut spawn = SpawnSim::new(0.0);
+        spawn.handle(&SpawnWire::Spawn);
+        assert!(spawn.handle(&SpawnWire::Spawn).is_empty());
+        assert_eq!(spawn.snapshot().task, Some(1));
+    }
+
+    #[test]
+    fn the_select_winner_is_the_task_output() {
+        let mut spawn = SpawnSim::new(0.0);
+        spawn.sync_now(0.0);
+        spawn.handle(&SpawnWire::Spawn);
+        assert_eq!(
+            spawn.tick(10_000.0),
+            vec![SpawnEvent::Select(SelectEvent::Won {
+                won: Won::Timer { waited_s: 10.0 },
+            })],
+        );
+        let snapshot = spawn.snapshot();
+        assert!(!snapshot.select.armed, "the task finished");
+        assert_eq!(snapshot.select.winner, Some(Won::Timer { waited_s: 10.0 }));
+
+        // and a finished task makes room for the next one
+        spawn.handle(&SpawnWire::Spawn);
+        spawn.handle(&SpawnWire::Press {
+            color: Color::Green,
+        });
+        let snapshot = spawn.snapshot();
+        assert_eq!(snapshot.task, Some(2));
+        assert_eq!(
+            snapshot.select.winner,
+            Some(Won::Button {
+                color: Color::Green
+            }),
         );
     }
 }
