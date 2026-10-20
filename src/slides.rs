@@ -45,7 +45,8 @@ macro_rules! deck {
 // CONCEPT.md's arc: the mutex as the problem, then futures (a timer, real
 // I/O, a race, the race in a loop, the loop given an actor), which makes
 // the recipe a summary rather than an introduction; then the channels that
-// connect actors, in the plan's order; then architectures; then Kay.
+// connect actors, in the plan's order; then architectures; then Kay. The
+// broadcast and watch channels come after the end, as bonus material.
 deck! {
     ("title", Title),
     ("mutex", MutexGameSlide),
@@ -60,13 +61,14 @@ deck! {
     ("cycle", CycleGameSlide),
     ("oneshot", OneshotGameSlide),
     ("call-and-response", CallGameSlide),
-    ("broadcast", BroadcastGameSlide),
-    ("watch", WatchGameSlide),
     ("budget-chat", ChatSlide),
     ("futures-unordered", UnorderedSlide),
     ("pipeline", PipelineSlide),
     ("speedd", SpeeddSlide),
     ("original-oop", KaySlide),
+    ("bonus", BonusSlide),
+    ("broadcast", BroadcastGameSlide),
+    ("watch", WatchGameSlide),
 }
 
 #[component]
@@ -284,6 +286,16 @@ pub fn KaySlide() -> Element {
                     span { class: "kay-means", "a Sender<Message> is a vtable whose target is chosen at spawn time" }
                 }
             }
+        }
+    }
+}
+
+/// The divider after Kay: what follows is extra, for questions or time left.
+#[component]
+pub fn BonusSlide() -> Element {
+    rsx! {
+        div { class: "slide lead",
+            h1 { "Bonus Material" }
         }
     }
 }
