@@ -55,7 +55,7 @@ pub fn SpeeddGame() -> Element {
     rsx! {
         div { class: "diagram board-game speedd-game",
             div { class: "game-header", "speedd" }
-            div { class: "status", "single-player · click an actor to step it" }
+            div { class: "status", "click an actor to step it" }
 
             div { class: "bd-board",
                 Edges {}

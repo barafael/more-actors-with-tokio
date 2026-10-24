@@ -1,22 +1,22 @@
 //! The tick contract: what it takes for a sim to be driven by a clock as
-//! well as by wires.
+//! well as by clicks.
 //!
-//! Every game before the timer was purely reactive — a wire arrived, state
-//! changed, events came back. A future that resolves on its own is the first
+//! Every game before the timer was purely reactive — a click arrived, state
+//! changed. A future that resolves on its own is the first
 //! thing in the deck that happens *because time passed*, and `select!` over
 //! two of them is the first thing that needs two clocks at once.
 //!
-//! [`MpscSim`](crate::sim::MpscSim) already grew this shape by hand for its
+//! The mpsc game's sim already grew this shape by hand for its
 //! flight animation: sync the clock, ask how long until something is due,
 //! then collect whatever came due. This states that shape once so the timer,
 //! select and loop-select sims share it, and so a driver can hold
 //! `&mut dyn Ticking<Event = _>` without caring which game it is.
 //!
 //! The contract deliberately has no `sleep` in it. A sim never waits; it
-//! reports *when* it would next like to be polled and the driver — a tokio
-//! `select!` on the server, a `requestAnimationFrame` loop in the browser —
-//! decides how to wait. That is what keeps the sims testable by stepping a
-//! number forward instead of by sleeping.
+//! reports *when* it would next like to be polled and the driver — a
+//! `requestAnimationFrame` loop in the browser — decides how to wait. That is
+//! what keeps the sims testable by stepping a number forward instead of by
+//! sleeping.
 
 /// A sim whose state can advance because time passed.
 ///
@@ -30,13 +30,13 @@ pub trait Ticking {
     type Event;
 
     /// Tell the sim what time it is now. Monotonic milliseconds, from
-    /// [`now_ms`](crate::sim::now_ms).
+    /// [`now_ms`](now_ms).
     fn sync_now(&mut self, now_ms: f64);
 
     /// How long until this sim has something to do, or `None` if it is
-    /// waiting on a wire rather than on the clock.
+    /// waiting on a click rather than on the clock.
     ///
-    /// A driver that gets `None` must park until a wire arrives; one that
+    /// A driver that gets `None` must park until a click arrives; one that
     /// gets `Some(0.0)` has work due right now.
     fn next_delay_ms(&self) -> Option<f64>;
 
@@ -53,13 +53,31 @@ pub trait Ticking {
     }
 }
 
+/// Monotonic milliseconds, valid on native and wasm.
+pub fn now_ms() -> f64 {
+    #[cfg(target_arch = "wasm32")]
+    {
+        // Cached: this is called on every frame of the clock loop, and
+        // `window()`/`performance()` are two JS-boundary crossings each.
+        with_performance(|performance| performance.now())
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        static EPOCH: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+        EPOCH
+            .get_or_init(std::time::Instant::now)
+            .elapsed()
+            .as_secs_f64()
+            * 1000.0
+    }
+}
+
 /// Milliseconds into the current minute, from the wall clock.
 ///
-/// The dial is read straight off the local wall clock rather than off a
-/// snapshot's `wall_ms`. A snapshot only arrives when something happens,
-/// which is precisely when a swept hand is least informative — and since the
-/// actor derives its own dial from the same wall clock, the two agree to
-/// within the room's clock skew without any interpolation.
+/// The dial is read straight off the wall clock every frame rather than off
+/// the timer sim, whose clock only moves while a future is pending; the sim
+/// maps its own clock onto the same wall with [`wall_offset_ms`], so the two
+/// agree.
 pub fn wall_now_ms() -> f64 {
     #[cfg(target_arch = "wasm32")]
     {
@@ -80,10 +98,10 @@ pub fn wall_now_ms() -> f64 {
 
 /// The offset that maps the monotonic sim clock onto the wall dial.
 ///
-/// Both the server actor and a single-player browser sim need this, and they
-/// need to agree, so it lives here rather than in either one's module.
+/// The browser sim and the sims' own arithmetic need this, and they need to
+/// agree, so it lives here rather than in either one's module.
 pub fn wall_offset_ms() -> f64 {
-    (wall_now_ms() - crate::sim::now_ms()).rem_euclid(60_000.0)
+    (wall_now_ms() - now_ms()).rem_euclid(60_000.0)
 }
 
 /// Run `read` against the browser's `Performance`, fetching it once.

@@ -4,408 +4,233 @@
 //! value.
 
 mod layout;
-mod state;
+mod model;
 
 use dioxus::prelude::*;
 
 use crate::games::palette;
-use crate::games::{use_game_connection, GameConnection};
-use crate::protocol::{
-    BroadcastEvent, BroadcastSnapshot, BroadcastWire, RxState, BROADCAST_CAPACITY,
-};
-use crate::sim::{BroadcastSim, BROADCAST_HOST_CONN, LOCAL_CONN};
-use crate::{AppCtx, GameMode};
-
-use layout::{BUFFER_LEFT, BUFFER_SLOT_W, RECEIVERS_RIGHT, SENDERS_LEFT, SENDERS_WIDTH};
-use state::{empty_snapshot, ChannelState, Flight};
-
-fn local_sim() -> BroadcastSim {
-    let mut sim = BroadcastSim::new();
-    // single-player: the local player is the presenter and owns the host seed
-    sim.handle(&BroadcastWire::ClaimPresenter, LOCAL_CONN);
-    sim
-}
-
-fn initial_snapshot(mode: GameMode) -> BroadcastSnapshot {
-    match mode {
-        GameMode::Local => local_sim().snapshot(),
-        GameMode::Remote => empty_snapshot(),
-    }
-}
-
-/// Local (loopback) driver: handle the wire against the in-browser sim and
-/// republish its snapshot, mirroring what the server actor broadcasts.
-fn dispatch_local(mut sim: Signal<BroadcastSim>, chan: &ChannelState, wire: BroadcastWire) {
-    let events = sim.with_mut(|s| s.handle(&wire, LOCAL_CONN));
-    for event in events {
-        chan.apply(event);
-    }
-    chan.set_snapshot(sim.read().snapshot());
-}
-
-/// Route a wire to the in-browser sim (single-player) or over the game
-/// socket. Every call site goes through here so the two modes cannot drift.
-fn dispatch(
-    conn: GameConnection,
-    sim: Signal<BroadcastSim>,
-    chan: &ChannelState,
-    wire: BroadcastWire,
-) {
-    if conn.is_local() {
-        dispatch_local(sim, chan, wire);
-    } else {
-        conn.send(&wire);
-    }
-}
-
-fn send_from(
-    conn: GameConnection,
-    sim: Signal<BroadcastSim>,
-    chan: &ChannelState,
-    mut drafts: Signal<Vec<(u64, char)>>,
-    handle: u64,
-) {
-    let draft = drafts
-        .read()
-        .iter()
-        .find(|(c, _)| *c == handle)
-        .map(|(_, ch)| *ch);
-    if let Some(ch) = draft {
-        dispatch(conn, sim, chan, BroadcastWire::Send { conn: handle, ch });
-        drafts.with_mut(|d| d.retain(|(c, _)| *c != handle));
-    }
-}
-
-fn set_draft(mut drafts: Signal<Vec<(u64, char)>>, handle: u64, ch: Option<char>) {
-    drafts.with_mut(|d| {
-        d.retain(|(c, _)| *c != handle);
-        if let Some(ch) = ch {
-            d.push((handle, ch));
-        }
-    });
-}
-
-fn restart(
-    conn: GameConnection,
-    ctx: AppCtx,
-    mut sim: Signal<BroadcastSim>,
-    mut chan: ChannelState,
-) {
-    if conn.is_local() {
-        sim.set(local_sim());
-        chan.set_snapshot(sim.read().snapshot());
-        chan.flights.set(Vec::new());
-        conn.set_status("single-player");
-    } else {
-        ctx.send(crate::AppUp::Restart {
-            game: crate::protocol::Game::Broadcast,
-        });
-    }
-}
-
-#[derive(Clone, PartialEq)]
-struct SenderView {
-    conn: u64,
-    owner: u64,
-    mine: bool,
-    is_host: bool,
-    top: f64,
-    height: f64,
-}
-
-#[derive(Clone, PartialEq)]
-struct RxView {
-    rx: RxState,
-    top: f64,
-}
+use crate::games::ticker::sleep_ms;
+use layout::{BUFFER_LEFT, RECEIVERS_RIGHT, SENDERS_LEFT, SENDERS_WIDTH};
+use model::{BroadcastSim, Receiver, RecvError, Value, CAPACITY, ORIGINAL};
 
 #[component]
 pub fn BroadcastGame() -> Element {
-    let ctx: AppCtx = use_context();
-    let mode = use_context::<GameMode>();
-
-    let sim = use_signal(local_sim);
-    let chan = ChannelState {
-        snap: use_signal(move || initial_snapshot(mode)),
-        flights: use_signal(Vec::new),
-        key: use_signal(|| 0),
-    };
-    let mut my_conn: Signal<Option<u64>> = use_signal(|| match mode {
-        GameMode::Local => Some(LOCAL_CONN),
-        GameMode::Remote => None,
-    });
-    let drafts = use_signal(Vec::<(u64, char)>::new);
-    let mut badge = use_signal(|| None::<(String, u64)>);
-
-    let conn = use_game_connection::<BroadcastEvent>("/ws/game/broadcast", move |event| {
-        if let BroadcastEvent::Hello { conn } = event {
-            my_conn.set(Some(conn));
-        } else if matches!(event, BroadcastEvent::SendRefused) {
-            let key = chan.next_key();
-            badge.set(Some(("no receivers — send failed".to_string(), key)));
-        } else {
-            #[cfg(not(target_arch = "wasm32"))]
-            let _ = chan.apply(event);
-            #[cfg(target_arch = "wasm32")]
-            if let Some(key) = chan.apply(event) {
-                // fallback: never let a missed animationend strand a flight
-                spawn(async move {
-                    gloo_timers::future::TimeoutFuture::new(1500).await;
-                    chan.remove_flight(key);
-                });
-            }
-        }
-    });
-
-    // transient badges clear themselves shortly after appearing
-    use_effect(move || {
-        if let Some((_, _key)) = badge() {
-            #[cfg(target_arch = "wasm32")]
-            {
-                let mut badge = badge;
-                spawn(async move {
-                    gloo_timers::future::TimeoutFuture::new(1600).await;
-                    badge.with_mut(|b| {
-                        if b.as_ref().is_some_and(|(_, k)| *k == _key) {
-                            *b = None;
-                        }
-                    });
-                });
-            }
-        }
-    });
-
-    // Claim the presenter slot: the host seed sender transfers to the
-    // presenter, so they can send from it (last claim wins).
-    use_effect(move || {
-        if conn.connected() && !conn.is_local() && my_conn().is_some() && ctx.may_present() {
-            conn.send(&BroadcastWire::ClaimPresenter);
-        }
-    });
-
-    let senders = use_memo(move || chan.snap.read().senders.clone());
-    let receivers = use_memo(move || chan.snap.read().receivers.clone());
-    let flights = use_memo(move || chan.flights.read().clone());
-    let my_receivers = use_memo(move || {
-        chan.snap
-            .read()
-            .receivers
-            .iter()
-            .filter(|r| Some(r.owner) == my_conn())
-            .map(|r| r.receiver)
-            .collect::<Vec<u64>>()
-    });
+    let mut sim = use_signal(BroadcastSim::new);
+    // what each handle's input box holds: view state, not channel state
+    let mut drafts = use_signal(Vec::<(u64, char)>::new);
     // Rapid-fire values for the burst button, so digits stay unique within
     // a burst and across bursts until the counter wraps at 10^4.
     let mut burst_counter = use_signal(|| 0u32);
-    let closed = use_memo(move || senders().is_empty());
 
-    let nodes = use_memo(move || {
-        let senders = senders();
-        senders
-            .iter()
-            .enumerate()
-            .map(|(i, s)| {
-                let row = layout::SENDERS_SPAN / senders.len().max(1) as f64;
-                let height = row * 0.6;
-                SenderView {
-                    conn: s.conn,
-                    owner: s.owner,
-                    mine: Some(s.owner) == my_conn(),
-                    is_host: s.conn == BROADCAST_HOST_CONN,
-                    top: layout::SENDERS_TOP + i as f64 * row + (row - height) / 2.0,
-                    height,
-                }
-            })
-            .collect::<Vec<SenderView>>()
-    });
-    let rx_views = use_memo(move || {
-        let receivers = receivers();
-        receivers
-            .iter()
-            .enumerate()
-            .map(|(i, rx)| RxView {
-                rx: *rx,
-                top: layout::receiver_cy(i, receivers.len()),
-            })
-            .collect::<Vec<RxView>>()
+    let channel = sim.read();
+    let senders = channel.senders().to_vec();
+    let receivers = channel.receivers().to_vec();
+    let buffer = channel.buffer();
+    let tail = channel.tail();
+    let flights = channel.flights().to_vec();
+    let refused = channel.refused().is_some();
+    let closed = channel.closed();
+    let can_subscribe = channel.can_subscribe();
+    drop(channel);
+
+    // a refusal clears itself shortly after appearing
+    let refused_key = use_memo(move || sim.read().refused());
+    use_effect(move || {
+        if let Some(key) = refused_key() {
+            spawn(async move {
+                sleep_ms(1600).await;
+                sim.with_mut(|s| s.clear_refused(key));
+            });
+        }
     });
 
-    let occupancy = use_memo(move || chan.snap.read().buffer.len());
+    let draft_of = move |handle: u64| {
+        drafts
+            .read()
+            .iter()
+            .find(|(h, _)| *h == handle)
+            .map(|(_, ch)| *ch)
+    };
+    let mut set_draft = move |handle: u64, ch: Option<char>| {
+        drafts.with_mut(|d| {
+            d.retain(|(h, _)| *h != handle);
+            if let Some(ch) = ch {
+                d.push((handle, ch));
+            }
+        });
+    };
 
     rsx! {
         div { class: "diagram broadcast-game",
             div { class: "game-header", "broadcast" }
-            div { class: "status", "{conn.status}" }
 
-            if closed() {
+            if closed {
                 div { class: "note-pill broadcast-closed",
                     "channel closed — every sender dropped. restart to play again."
                 }
             }
 
-            for view in nodes() {
-                div { key: "{view.conn}",
-                    div {
-                        class: if view.is_host { "actor sender-node host" } else { "actor sender-node" },
-                        style: "top: {view.top}%; height: {view.height}%; left: {SENDERS_LEFT}%; width: {SENDERS_WIDTH}%;",
-                        title: if view.is_host { "host seed sender" } else if view.mine { "your sender" } else { "another client\'s sender" },
-                        { if view.is_host { "host" } else { "Sender" } }
-                    }
-                    div {
-                        class: "sender-btns",
-                        style: "top: {view.top + view.height + 1.0}%; left: {SENDERS_LEFT}%; width: {SENDERS_WIDTH}%;",
-                        button {
-                            class: "btn small",
-                            disabled: !conn.connected() || closed(),
-                            title: "subscribe another receiver via this sender — like tx.subscribe(), every click adds an independent receiver that starts at the tail and only sees values sent from now on",
-                            onclick: move |_| {
-                                dispatch(conn, sim, &chan, BroadcastWire::Subscribe);
-                            },
-                            "subscribe"
+            for (i, handle) in senders.iter().copied().enumerate() {
+                SenderNode {
+                    key: "{handle}",
+                    handle,
+                    geometry: layout::sender_geometry(i, senders.len()),
+                    draft: draft_of(handle).map(String::from).unwrap_or_default(),
+                    can_subscribe,
+                    ondraft: move |ch| set_draft(handle, ch),
+                    onsend: move |_| {
+                        if let Some(ch) = draft_of(handle) {
+                            sim.with_mut(|s| s.send(handle, ch));
+                            set_draft(handle, None);
                         }
-                        button {
-                            class: "btn small clone",
-                            disabled: !conn.connected(),
-                            title: "clone this sender — the clone is yours",
-                            onclick: move |_| {
-                                let wire = BroadcastWire::CloneSender { source: view.conn };
-                                dispatch(conn, sim, &chan, wire);
-                            },
-                            "clone"
-                        }
-                        if view.mine {
-                            {
-                                let draft = drafts.read().iter().find(|(c, _)| *c == view.conn)
-                                    .map(|(_, ch)| ch.to_string()).unwrap_or_default();
-                                let busy = closed();
-                                rsx! {
-                                    input {
-                                        key: "in-{view.conn}",
-                                        class: "field",
-                                        maxlength: 1,
-                                        disabled: busy,
-                                        value: draft.to_string(),
-                                        oninput: move |e| set_draft(drafts, view.conn, e.value().chars().next()),
-                                    }
-                                    button {
-                                        class: "btn send",
-                                        disabled: busy,
-                                        onclick: move |_| send_from(conn, sim, &chan, drafts, view.conn),
-                                        "send"
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    },
+                    sim,
                 }
             }
 
-            BufferRow { buffer: chan.snap.read().buffer.clone(), tail: chan.snap.read().tail }
+            BufferRow { buffer: buffer.clone(), tail }
 
-            for view in rx_views() {
+            for (i, rx) in receivers.iter().copied().enumerate() {
                 ReceiverBox {
-                    key: "{view.rx.receiver}",
-                    receiver: view.rx.receiver,
-                    owner: view.rx.owner,
-                    next: view.rx.next,
-                    lagged_total: view.rx.lagged_total,
-                    last: view.rx.last,
-                    error: view.rx.error,
-                    waiting: view.rx.waiting,
-                    top: view.top,
-                    mine: Some(view.rx.owner) == my_conn(),
-                    connected: conn.connected(),
-                    onreceive: move |_| {
-                        let wire = BroadcastWire::Receive { receiver: view.rx.receiver };
-                        dispatch(conn, sim, &chan, wire);
-                    },
-                    ondrop: move |_| {
-                        let wire = BroadcastWire::Unsubscribe { receiver: view.rx.receiver };
-                        dispatch(conn, sim, &chan, wire);
-                    },
+                    key: "{rx.id}",
+                    rx,
+                    top: layout::receiver_cy(i, receivers.len()),
+                    sim,
                 }
             }
 
-            LinkLayer { senders: senders(), snapshot: chan.snap.read().clone() }
+            LinkLayer { receivers: receivers.clone(), buffered: buffer.len(), tail }
 
-            FlightLayer {
-                flights: flights(),
-                senders: senders(),
-                onremove: move |key| chan.remove_flight(key),
+            for flight in flights {
+                span {
+                    key: "{flight.key}",
+                    class: "bcast-flight",
+                    style: "--from-x: {SENDERS_LEFT + SENDERS_WIDTH / 2.0}%; --from-y: {layout::sender_cy(&senders, flight.value.from)}%; color: {palette::sender_hex(flight.value.from)};",
+                    onanimationend: move |_| sim.with_mut(|s| s.land(flight.key)),
+                    "{flight.value.ch}"
+                }
             }
 
             div { class: "game-footer",
-                span { class: "note-pill occupancy",
-                    "buffer {occupancy} / {BROADCAST_CAPACITY}"
+                span { class: "note-pill occupancy", "buffer {buffer.len()} / {CAPACITY}" }
+                if refused {
+                    span { class: "note-pill refused", "no receivers — send failed" }
                 }
-                if let Some((text, _key)) = badge() {
-                    span { class: "note-pill refused", {text} }
-                }
-                if closed() {
+                if closed {
                     span { class: "note-pill blocked", "closed" }
                 }
-                {
-                    match my_receivers().as_slice() {
-                        [] => rsx! {},
-                        [one] => rsx! { span { class: "note-pill", "rx #{one}" } },
-                        many => rsx! { span { class: "note-pill", "rx ×{many.len()} yours" } },
-                    }
-                }
-                if ctx.may_present() {
-                    button {
-                        class: "btn",
-                        disabled: !conn.connected() || closed(),
-                        title: "seven rapid sends from your first sender — overflows the ring, evicts the oldest values, and strands any receiver that has not kept up",
-                        onclick: move |_| {
-                            let Some(sender) = senders()
-                                .iter()
-                                .find(|s| Some(s.owner) == my_conn())
-                                .map(|s| s.conn)
-                            else {
+                button {
+                    class: "btn",
+                    disabled: closed,
+                    title: "seven rapid sends from the first sender — overflows the ring, evicts the oldest values, and strands any receiver that has not kept up",
+                    onclick: move |_| {
+                        let start = burst_counter();
+                        sim.with_mut(|s| {
+                            let Some(&sender) = s.senders().first() else {
                                 return;
                             };
                             for i in 0..7u32 {
-                                let ch =
-                                    char::from_digit((burst_counter() + i) % 10, 10).unwrap();
-                                dispatch(conn, sim, &chan, BroadcastWire::Send { conn: sender, ch });
+                                let ch = char::from_digit((start + i) % 10, 10).unwrap();
+                                s.send(sender, ch);
                             }
-                            burst_counter.set((burst_counter() + 7) % 10_000);
-                        },
-                        "burst ×7"
-                    }
-                    button {
-                        class: "btn",
-                        disabled: !conn.connected(),
-                        onclick: move |_| restart(conn, ctx, sim, chan),
-                        "restart"
-                    }
+                        });
+                        burst_counter.set((start + 7) % 10_000);
+                    },
+                    "burst ×7"
                 }
+                button {
+                    class: "btn",
+                    onclick: move |_| {
+                        sim.set(BroadcastSim::new());
+                        drafts.set(Vec::new());
+                    },
+                    "restart"
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn SenderNode(
+    handle: u64,
+    geometry: (f64, f64),
+    draft: String,
+    can_subscribe: bool,
+    ondraft: EventHandler<Option<char>>,
+    onsend: EventHandler,
+    sim: Signal<BroadcastSim>,
+) -> Element {
+    let (top, height) = geometry;
+    let original = handle == ORIGINAL;
+    rsx! {
+        div {
+            class: if original { "actor sender-node original" } else { "actor sender-node" },
+            style: "top: {top}%; height: {height}%; left: {SENDERS_LEFT}%; width: {SENDERS_WIDTH}%;",
+            title: if original { "the sender broadcast::channel returned" } else { "a cloned sender" },
+            if original { "tx" } else { "tx #{handle}" }
+        }
+        div {
+            class: "sender-btns",
+            style: "top: {top + height + 1.0}%; left: {SENDERS_LEFT}%; width: {SENDERS_WIDTH}%;",
+            button {
+                class: "btn small",
+                disabled: !can_subscribe,
+                title: "subscribe another receiver via this sender — like tx.subscribe(), every click adds an independent receiver that starts at the tail and only sees values sent from now on",
+                onclick: move |_| {
+                    sim.with_mut(|s| s.subscribe());
+                },
+                "subscribe"
+            }
+            button {
+                class: "btn small clone",
+                title: "clone this sender",
+                onclick: move |_| {
+                    sim.with_mut(|s| s.clone_sender(handle));
+                },
+                "clone"
+            }
+            button {
+                class: "btn small",
+                title: "drop(tx): when the last sender goes, the channel closes — after its receivers drain what is buffered",
+                onclick: move |_| sim.with_mut(|s| s.drop_sender(handle)),
+                "drop"
+            }
+            input {
+                class: "field",
+                maxlength: 1,
+                value: draft,
+                oninput: move |e| ondraft.call(e.value().chars().next()),
+            }
+            button {
+                class: "btn send",
+                onclick: move |_| onsend.call(()),
+                "send"
             }
         }
     }
 }
 
 /// Sequence number of the oldest retained value. `tail` counts every value
-/// ever sent, so the ring holds seqs `oldest..tail`. Saturating: a snapshot
-/// can never have more buffered values than were sent, but the arithmetic
-/// must not underflow if one ever does.
+/// ever sent, so the ring holds seqs `oldest..tail`. Saturating: there can
+/// never be more buffered values than were sent, but the arithmetic must
+/// not underflow if there ever are.
 fn oldest_seq(tail: u64, buffered: usize) -> u64 {
     tail.saturating_sub(buffered as u64)
 }
 
 #[component]
-fn BufferRow(buffer: Vec<crate::protocol::BufferChar>, tail: u64) -> Element {
+fn BufferRow(buffer: Vec<Value>, tail: u64) -> Element {
     rsx! {
         div { class: "buffer-label", "channel buffer" }
-        for i in 0..BROADCAST_CAPACITY {
-            { match buffer.get(i) {
-                Some(owned) => rsx! {
+        for i in 0..CAPACITY {
+            match buffer.get(i) {
+                Some(value) => rsx! {
                     div {
                         key: "{oldest_seq(tail, buffer.len()) + i as u64}",
                         class: "actor buf-slot filled",
-                        style: "left: {layout::slot_left(i)}%; width: {layout::BUFFER_SLOT_W}%; --c: {palette::sender_hex(owned.conn)};",
-                        "{owned.ch}"
+                        style: "left: {layout::slot_left(i)}%; width: {layout::BUFFER_SLOT_W}%; --c: {palette::sender_hex(value.from)};",
+                        "{value.ch}"
                     }
                 },
                 None => rsx! {
@@ -415,113 +240,72 @@ fn BufferRow(buffer: Vec<crate::protocol::BufferChar>, tail: u64) -> Element {
                         style: "left: {layout::slot_left(i)}%; width: {layout::BUFFER_SLOT_W}%;",
                     }
                 },
-            } }
+            }
         }
         div { class: "buffer-oldest", style: "left: {BUFFER_LEFT}%;", "oldest" }
         div {
             class: "buffer-newest",
-            style: "left: {BUFFER_LEFT + (BROADCAST_CAPACITY - 1) as f64 * (BUFFER_SLOT_W + 1.2)}%;",
+            style: "left: {layout::slot_left(CAPACITY - 1)}%;",
             "newest"
         }
         div {
             class: "buffer-tail",
-            style: "left: {BUFFER_LEFT + tail.min(BROADCAST_CAPACITY as u64) as f64 * (BUFFER_SLOT_W + 1.2)}%;",
+            style: "left: {layout::slot_left(tail.min(CAPACITY as u64) as usize)}%;",
             "next →"
         }
     }
 }
 
 #[component]
-fn ReceiverBox(
-    receiver: u64,
-    owner: u64,
-    next: u64,
-    lagged_total: u64,
-    last: Option<crate::protocol::BufferChar>,
-    error: Option<crate::protocol::BroadcastError>,
-    waiting: bool,
-    top: f64,
-    mine: bool,
-    connected: bool,
-    onreceive: EventHandler,
-    ondrop: EventHandler,
-) -> Element {
-    let _ = owner;
+fn ReceiverBox(rx: Receiver, top: f64, sim: Signal<BroadcastSim>) -> Element {
+    let id = rx.id;
+    let closed = rx.error == Some(RecvError::Closed);
     // constant node shape: dynamic parts are text/classes only
-    let class = if error == Some(crate::protocol::BroadcastError::Closed) {
-        "actor rx-b-node closed"
-    } else if waiting {
-        "actor rx-b-node waiting"
+    let (class, label) = if closed {
+        ("actor rx-b-node closed", "closed")
+    } else if rx.waiting {
+        ("actor rx-b-node waiting", "…")
     } else {
-        "actor rx-b-node"
+        ("actor rx-b-node", "Rx")
     };
-    let label = if error == Some(crate::protocol::BroadcastError::Closed) {
-        "closed"
-    } else if waiting {
-        "…"
-    } else {
-        "Rx"
-    };
-    let last_text = last
-        .map(|o| o.ch.to_string())
+    let last_text = rx
+        .last
+        .map(|v| v.ch.to_string())
         .unwrap_or_else(|| "–".to_string());
-    let last_color = last
-        .map(|o| palette::sender_hex(o.conn))
+    let last_color = rx
+        .last
+        .map(|v| palette::sender_hex(v.from))
         .unwrap_or_else(|| "#999".to_string());
-    let (badge, badge_class) = match error {
-        Some(crate::protocol::BroadcastError::Lagged(n)) => {
-            (format!("lagged {n}"), "lag-badge".to_string())
-        }
-        Some(crate::protocol::BroadcastError::Closed) => {
-            ("closed".to_string(), "lag-badge closed".to_string())
-        }
-        _ if lagged_total > 0 => (format!("missed {lagged_total}"), "lag-total".to_string()),
-        _ => (String::new(), "lag-total".to_string()),
+    let (badge, badge_class) = match rx.error {
+        Some(RecvError::Lagged(n)) => (format!("lagged {n}"), "lag-badge"),
+        Some(RecvError::Closed) => ("closed".to_string(), "lag-badge closed"),
+        None if rx.lagged_total > 0 => (format!("missed {}", rx.lagged_total), "lag-total"),
+        None => (String::new(), "lag-total"),
     };
     rsx! {
         div {
-            class: class,
+            class,
             style: "top: {top}%; right: {RECEIVERS_RIGHT}%;",
             div { class: "rx-name", {label} }
             div { class: "rx-last", style: "color: {last_color};", {last_text} }
             div { class: badge_class, {badge} }
-            div { class: "rx-next", "next #{next}" }
-            if mine {
-                div { class: "rx-btns",
-                    button {
-                        class: "btn small rcv",
-                        disabled: !connected || error == Some(crate::protocol::BroadcastError::Closed),
-                        title: if waiting { "recv() — blocked, completes on the next send" } else { "recv()" },
-                        onclick: move |_| onreceive.call(()),
-                        "recv"
-                    }
-                    button {
-                        class: "btn small",
-                        disabled: !connected,
-                        title: "drop this receiver",
-                        onclick: move |_| ondrop.call(()),
-                        "drop"
-                    }
+            div { class: "rx-next", "next #{rx.next}" }
+            div { class: "rx-btns",
+                button {
+                    class: "btn small rcv",
+                    disabled: closed,
+                    title: if rx.waiting { "recv() — waiting, completes on the next send" } else { "recv()" },
+                    onclick: move |_| {
+                        sim.with_mut(|s| s.recv(id));
+                    },
+                    "recv"
                 }
-            }
-        }
-    }
-}
-
-#[component]
-fn FlightLayer(
-    flights: Vec<Flight>,
-    senders: Vec<crate::protocol::SenderInfo>,
-    onremove: EventHandler<u64>,
-) -> Element {
-    rsx! {
-        for f in flights {
-            span {
-                key: "{f.key}",
-                class: "bcast-flight",
-                style: "--from-x: {SENDERS_LEFT + SENDERS_WIDTH / 2.0}%; --from-y: {flight_start_y(&senders, f.from)}%; color: {palette::sender_hex(f.from)};",
-                onanimationend: move |_| onremove.call(f.key),
-                "{f.ch}"
+                button {
+                    class: "btn small",
+                    title: "drop this receiver",
+                    onclick: move |_| sim.with_mut(|s| s.drop_receiver(id)),
+                    "drop"
+                }
             }
         }
     }
@@ -530,16 +314,15 @@ fn FlightLayer(
 /// Dashed index lines: each receiver ties to the buffer slot its `next`
 /// points at; red when it has fallen behind the oldest value.
 #[component]
-fn LinkLayer(senders: Vec<crate::protocol::SenderInfo>, snapshot: BroadcastSnapshot) -> Element {
-    let oldest = oldest_seq(snapshot.tail, snapshot.buffer.len());
-    let lines = snapshot
-        .receivers
+fn LinkLayer(receivers: Vec<Receiver>, buffered: usize, tail: u64) -> Element {
+    let oldest = oldest_seq(tail, buffered);
+    let lines = receivers
         .iter()
         .enumerate()
         .map(|(i, rx)| {
-            let y = layout::receiver_cy(i, snapshot.receivers.len());
+            let y = layout::receiver_cy(i, receivers.len());
             let x = RECEIVERS_RIGHT + layout::RECEIVERS_WIDTH;
-            if snapshot.buffer.is_empty() {
+            if buffered == 0 {
                 return (y, x, layout::BUFFER_LEFT, layout::BUFFER_CY, false);
             }
             // `next` is 1-based (the seq this receiver will read next), the
@@ -548,8 +331,7 @@ fn LinkLayer(senders: Vec<crate::protocol::SenderInfo>, snapshot: BroadcastSnaps
             // read yet, so its line rests on the newest slot.
             let cursor = rx.next.saturating_sub(1);
             let behind = cursor < oldest;
-            let slot = (cursor.saturating_sub(oldest) as usize)
-                .min(snapshot.buffer.len().saturating_sub(1));
+            let slot = (cursor.saturating_sub(oldest) as usize).min(buffered - 1);
             (
                 y,
                 x,
@@ -574,17 +356,5 @@ fn LinkLayer(senders: Vec<crate::protocol::SenderInfo>, snapshot: BroadcastSnaps
                 }
             }
         }
-    }
-}
-
-fn flight_start_y(senders: &[crate::protocol::SenderInfo], conn: u64) -> f64 {
-    let n = senders.len().max(1) as f64;
-    let row = layout::SENDERS_SPAN / n;
-    match senders.iter().position(|s| s.conn == conn) {
-        Some(i) => {
-            let (top, h) = (layout::SENDERS_TOP + i as f64 * row, row * 0.6);
-            top + h / 2.0
-        }
-        None => layout::SENDERS_TOP + layout::SENDERS_SPAN / 2.0,
     }
 }

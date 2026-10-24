@@ -1,7 +1,6 @@
 //! The deadlock minigame: two actors in a cycle of bounded channels.
 //!
-//! Single-player, in the talk as in the export. The presenter feeds
-//! messages in and the room watches them circulate — until one message too
+//! You feed messages in and watch them circulate — until one message too
 //! many, when both actors park in `send().await` towards each other and the
 //! only thing still moving is the clock on each of them. Then cut the cycle
 //! and feed it the same messages again.
@@ -10,9 +9,9 @@ mod model;
 
 use dioxus::prelude::*;
 
+use crate::clock::now_ms;
 use crate::games::ticker::{use_frame_clock, use_local_tick};
 use crate::games::{palette, Waited};
-use crate::sim::now_ms;
 use model::{Actor, CycleSim, Msg, A, B, CAPACITY};
 
 #[component]
@@ -23,8 +22,7 @@ pub fn CycleGame() -> Element {
 
     let s = sim.read();
     // The count-ups are the only thing that moves once the cycle seizes.
-    // They read the frame clock themselves; the sim is local, so its
-    // instants share `now_ms`'s epoch and need no receipt time.
+    // They read the frame clock themselves.
     let deadlock = s.deadlocked_since();
     let cut = s.cut;
     let inboxes: [Vec<Msg>; 2] = [
@@ -49,7 +47,6 @@ pub fn CycleGame() -> Element {
     rsx! {
         div { class: "diagram cycle-game",
             div { class: "game-header", "cycle" }
-            div { class: "status", "single-player · your own actors" }
 
             div { class: "cy-stage",
                 div { class: "cy-row",
@@ -61,7 +58,7 @@ pub fn CycleGame() -> Element {
                             "send into A"
                         }
                         if let Some((msg, _, since)) = injecting {
-                            Waited { for_ms: 0.0, at: since, clock, label: format!("m{} parked · ", msg.id) }
+                            Waited { since, clock, label: format!("m{} parked · ", msg.id) }
                         }
                     }
                     Inbox { messages: inboxes[A].clone() }
@@ -87,7 +84,7 @@ pub fn CycleGame() -> Element {
                     Some(since) => rsx! {
                         span { class: "note-pill resolved red",
                             "deadlock · each parked sending to the other · "
-                            Waited { for_ms: 0.0, at: since, clock, class: "" }
+                            Waited { since, clock, class: "" }
                             " and counting"
                         }
                     },
@@ -166,7 +163,7 @@ fn ActorBox(name: String, actor: Actor, stuck: bool, clock: Signal<f64>) -> Elem
                 Actor::Sending { msg, since, .. } => rsx! {
                     div { class: "cr-state", "send().await" }
                     MsgChip { msg, class: "ut-slot parked" }
-                    Waited { for_ms: 0.0, at: since, clock, label: "parked · " }
+                    Waited { since, clock, label: "parked · " }
                 },
             }
         }

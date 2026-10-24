@@ -2,13 +2,11 @@
 //! left, a shrinking vertical list of receivers on the right (the mpsc sender
 //! list rotated). Positions are % of diagram width/height.
 
-use crate::protocol::RxInfo;
-
 /// Left edge of the fixed sender box, its vertical center and width, in %.
 pub const TX_LEFT: f64 = 3.0;
 pub const TX_W: f64 = 11.0;
-/// The presenter's send input sits right of the sender box; it needs room
-/// for a text field and a button without reaching the cell.
+/// The send input sits right of the sender box; it needs room for a text
+/// field and a button without reaching the cell.
 pub const TX_CTL_LEFT: f64 = 15.5;
 
 /// Shared channel cell: the one slot the whole channel is built around.
@@ -34,10 +32,10 @@ pub fn rx_geometry(i: usize, n: usize) -> (f64, f64) {
 
 /// Vertical center of receiver `id`; falls back to the cell center when the
 /// receiver is gone (a flight still in transit).
-pub fn rx_cy(receivers: &[RxInfo], id: u64) -> f64 {
-    match receivers.iter().position(|r| r.id == id) {
+pub fn rx_cy(ids: &[u64], id: u64) -> f64 {
+    match ids.iter().position(|r| *r == id) {
         Some(i) => {
-            let (top, h) = rx_geometry(i, receivers.len());
+            let (top, h) = rx_geometry(i, ids.len());
             top + h / 2.0
         }
         None => CELL_CY,

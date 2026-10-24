@@ -1,8 +1,6 @@
 //! Canvas geometry for the mpsc diagram: senders in a vertical list that
 //! shrinks as it grows, arrows fanning right into the receiver.
 
-use crate::protocol::SenderInfo;
-
 pub const SENDER_LIST_TOP: f64 = 6.0;
 pub const SENDER_LIST_SPAN: f64 = 82.0;
 /// Right edge of the sender nodes, in % of diagram width.
@@ -25,10 +23,11 @@ pub fn sender_geometry(i: usize, n: usize) -> (f64, f64) {
     (top, h)
 }
 
-pub fn sender_cy(senders: &[SenderInfo], conn: u64) -> f64 {
-    match senders.iter().position(|s| s.conn == conn) {
+/// Vertical center of `handle`'s node, where its arrow and flights start.
+pub fn sender_cy(handles: &[u64], handle: u64) -> f64 {
+    match handles.iter().position(|h| *h == handle) {
         Some(i) => {
-            let (top, h) = sender_geometry(i, senders.len());
+            let (top, h) = sender_geometry(i, handles.len());
             top + h / 2.0
         }
         None => RECEIVER_CY,

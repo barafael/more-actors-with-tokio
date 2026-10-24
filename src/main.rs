@@ -1,30 +1,18 @@
-#[cfg(feature = "server")]
-fn main() {
-    more_actors_with_tokio::server::serve_app();
-}
-
-// The client half targets wasm. Building it for a native target compiles
-// fine and then panics deep inside wasm-bindgen on first use, which is a
-// baffling way to find out you built the wrong thing — and exactly what
-// happens when a host's Rust buildpack runs a plain `cargo build`, since
-// the default feature is `web`.
-//
-// Deploys must build the server: `dx bundle --platform web --fullstack`
-// (see Dockerfile), or `--no-default-features --features server`.
-#[cfg(all(not(feature = "server"), not(target_arch = "wasm32")))]
-fn main() {
-    eprintln!("this is the web client, built for a native target, so it cannot run.");
-    eprintln!("build the server instead:");
-    eprintln!();
-    eprintln!("    dx bundle --platform web --fullstack --release");
-    eprintln!();
-    eprintln!("or, without the CLI:");
-    eprintln!();
-    eprintln!("    cargo build --release --no-default-features --features server");
-    std::process::exit(2);
-}
-
-#[cfg(all(not(feature = "server"), target_arch = "wasm32"))]
+#[cfg(target_arch = "wasm32")]
 fn main() {
     dioxus::launch(more_actors_with_tokio::App);
+}
+
+// The deck is a browser client, so a native build has nothing to do but
+// explain itself — a plain `cargo run` lands here rather than panicking
+// somewhere deep inside wasm-bindgen on first use.
+#[cfg(not(target_arch = "wasm32"))]
+fn main() {
+    eprintln!("the deck is a web client and has no native target to run.");
+    eprintln!("serve it in a browser instead:");
+    eprintln!();
+    eprintln!("    dx serve --platform web");
+    eprintln!();
+    eprintln!("or render the static export: `cargo run --features export --bin export`.");
+    std::process::exit(2);
 }

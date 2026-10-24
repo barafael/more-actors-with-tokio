@@ -28,3 +28,22 @@ pub fn receiver_cy(i: usize, n: usize) -> f64 {
     let row = RECEIVERS_SPAN / n.max(1) as f64;
     RECEIVERS_TOP + i as f64 * row + row / 2.0
 }
+
+/// `(top, height)` of the i-th sender out of n, in %.
+pub fn sender_geometry(i: usize, n: usize) -> (f64, f64) {
+    let row = SENDERS_SPAN / n.max(1) as f64;
+    let height = row * 0.6;
+    (SENDERS_TOP + i as f64 * row + (row - height) / 2.0, height)
+}
+
+/// Vertical center of `handle`'s node, where its flights take off; the
+/// middle of the column once the handle is gone.
+pub fn sender_cy(handles: &[u64], handle: u64) -> f64 {
+    match handles.iter().position(|h| *h == handle) {
+        Some(i) => {
+            let (top, height) = sender_geometry(i, handles.len());
+            top + height / 2.0
+        }
+        None => SENDERS_TOP + SENDERS_SPAN / 2.0,
+    }
+}

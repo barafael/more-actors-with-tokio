@@ -8,11 +8,12 @@ contents.
 
     cargo run --features export --bin export
 
-The pages ship with the wasm client so they hydrate into the full,
-single-player deck when served over http. The bundle is copied from
+The pages ship with the wasm client so they hydrate into the full deck when
+served over http. The bundle is copied from
 `target/dx/more-actors-with-tokio/debug/web/public/wasm`; run
-`dx build --platform web` first or the pages stay static (the exporter
-warns).
+`dx build --platform web --features hydrate` first or the pages stay static
+(the exporter warns). Without `hydrate` the client cannot adopt the
+server-rendered DOM and renders a second deck beneath it.
 
 ## What we learned building it
 
@@ -22,7 +23,7 @@ warns).
   export immediately.
 - **The pages must work with no wasm at all.** Module scripts and wasm
   fetch fail on `file://`, so a page opened from disk stays plain HTML.
-  Every slide therefore carries baked-in navigation: `‹ prev · n / 10 ·
+  Every slide therefore carries baked-in navigation: `‹ prev · n / N ·
   next ›` links plus a tiny inline key handler (arrows, PageUp/Down,
   space). The handler stands down the moment the real client boots —
   the module script's `onload` sets `window.__dx_booted` — because the
@@ -31,7 +32,7 @@ warns).
   buttons.
 - **The hydration payload is a captured constant** (`initial_dioxus_
   hydration_data` in export.rs): the byte-for-byte empty root payload the
-  live server sends. Re-capture it if `use_server_future`s are ever
+  hydrate runtime expects. Re-capture it if `use_server_future`s are ever
   introduced; the client refuses to hydrate on a mismatched payload.
 - **`main.css` here is a byte-copy of `assets/main.css`**, refreshed by
   the exporter on every run. Never hand-edit it; edit the asset and
@@ -42,9 +43,6 @@ warns).
   animates. (An experimental canvas stage lives on the
   `abstellgleis/canvas-stage` branch; main is deliberately HTML-only —
   drag-and-drop was dropped, the keyframe animations were kept.)
-- **Local mode has no `Hello`.** The player identity arrives over the
-  game websocket, which does not exist single-player — games must seed
-  the local identity themselves (mpsc seeds `Some(LOCAL_CONN)`, watch
-  falls back to `LOCAL_CONN` in a memo, broadcast seeds it too). Skip
-  that and the game renders without the player's own controls, which
-  reads as "the export is broken" rather than "one signal is `None`".
+- **Every game opens on something to look at.** watch starts with a live
+  channel and two receivers, mpsc and broadcast with their original
+  sender: an empty stage reads as "the export is broken".

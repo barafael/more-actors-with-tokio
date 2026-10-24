@@ -1,38 +1,41 @@
 use dioxus::prelude::*;
 
 use crate::games::broadcast::BroadcastGame;
-use crate::games::button::ButtonGame;
 use crate::games::call::CallGame;
 use crate::games::chat::ChatGame;
 use crate::games::cycle::CycleGame;
+use crate::games::futures::{ButtonGame, LoopSelectGame, SelectGame, SpawnGame, TimerGame};
 use crate::games::mpsc::MpscGame;
 use crate::games::mutex::MutexGame;
 use crate::games::oneshot::OneshotGame;
 use crate::games::pipeline::PipelineGame;
-use crate::games::select::{LoopSelectGame, SelectGame, SpawnGame};
 use crate::games::speedd::SpeeddGame;
-use crate::games::timer::TimerGame;
 use crate::games::unit_test::UnitTestGame;
 use crate::games::unordered::UnorderedGame;
 use crate::games::watch::WatchGame;
 use crate::games::watchdog::WatchdogGame;
-use crate::{protocol::SLIDE_COUNT, AppCtx, GameMode};
 
-/// Declares the deck: each slide's export name and component, in order.
+/// Declares the deck: each slide's export name and what it shows, in order.
 /// Expands to the names list and the index-to-slide function, so adding or
 /// moving a slide is one line here — the deck, the slide count and the
 /// export all follow.
+///
+/// A slide is a component, or `section "Title"` for a chapter divider, or
+/// `topic "Title"` for a heading still waiting for its content.
 macro_rules! deck {
-    ($(($name:literal, $slide:ident)),* $(,)?) => {
+    ($(($name:literal, $($slide:tt)+)),* $(,)?) => {
         /// Every slide's name, in deck order: the export's file names.
         pub const SLIDE_NAMES: &[&str] = &[$($name),*];
+
+        /// How many slides the deck has.
+        pub const SLIDE_COUNT: usize = SLIDE_NAMES.len();
 
         /// The slide at `index` in the deck.
         pub fn slide(index: usize) -> Element {
             let mut position = 0;
             $(
                 if index == position {
-                    return rsx! { $slide {} };
+                    return slide!($($slide)+);
                 }
                 position += 1;
             )*
@@ -42,34 +45,92 @@ macro_rules! deck {
     };
 }
 
-// CONCEPT.md's arc: the mutex as the problem, then futures (a timer, real
-// I/O, a race, the race in a loop, the loop given an actor), which makes
-// the recipe a summary rather than an introduction; then the channels that
-// connect actors, in the plan's order; then architectures; then Kay. The
-// broadcast and watch channels come after the end, as bonus material.
+/// One `deck!` entry's slide.
+macro_rules! slide {
+    (section $title:literal) => {
+        rsx! { Section { title: $title } }
+    };
+    (topic $title:literal) => {
+        rsx! { Topic { title: $title } }
+    };
+    ($component:ident) => {
+        rsx! { $component {} }
+    };
+}
+
+// schedule.md's four chapters: the hook (2 min), the prerequisites (10 min:
+// futures, combining them, spawning, channels), the pattern (12 min, the
+// blog post), and its consequences for architecture (12 min). Then Kay, and
+// a divider for whatever is left over.
 deck! {
+    // the hook
     ("title", Title),
     ("mutex", MutexGameSlide),
+
+    ("prerequisites", section "Prerequisites"),
+    // futures
     ("timer", TimerGameSlide),
     ("button-future", ButtonGameSlide),
+    // combining futures
     ("select", SelectGameSlide),
-    ("spawn", SpawnGameSlide),
     ("loop-select", LoopSelectGameSlide),
+    // spawning
+    ("spawn", SpawnGameSlide),
     ("watchdog", WatchdogSlide),
-    ("recipe", Recipe),
-    ("unit-test", UnitTestSlide),
+    // channels
     ("mpsc", MpscGameSlide),
-    ("cycle", CycleGameSlide),
     ("oneshot", OneshotGameSlide),
+
+    ("the-pattern", section "The Pattern"),
+    ("recipe", Recipe),
+    ("event-loop", topic "The event loop as consuming method"),
+    ("spawning", topic "Leave the spawning to the user"),
+    ("no-handles", topic "No actor handles"),
+    ("unit-test", UnitTestSlide),
+    ("message-enums", topic "Message enums"),
     ("call-and-response", CallGameSlide),
-    ("budget-chat", ChatSlide),
+    // opinions
+    ("no-framework", topic "There is no Rust actor framework, and it's called tokio"),
+    ("no-heartbeat", topic "Don't make a Heartbeat actor"),
+    ("no-actor", topic "The only thing better than an actor: no actor"),
+
+    ("architecture", section "Architecture Consequences"),
+    // cancellation cascade
     ("futures-unordered", UnorderedSlide),
     ("pipeline", PipelineSlide),
-    ("speedd", SpeeddSlide),
-    ("original-oop", KaySlide),
-    ("bonus", BonusSlide),
+    ("explicit-shutdown", topic "Explicit shutdown"),
+    ("panic-safety", topic "Panic safety"),
+    // deadlocks: keep the topology a DAG
+    ("cycle", CycleGameSlide),
+    // other channels
     ("broadcast", BroadcastGameSlide),
     ("watch", WatchGameSlide),
+    // in practice
+    ("budget-chat", ChatSlide),
+    ("speedd", SpeeddSlide),
+
+    ("original-oop", KaySlide),
+    ("bonus", BonusSlide),
+}
+
+/// A chapter divider.
+#[component]
+fn Section(title: &'static str) -> Element {
+    rsx! {
+        div { class: "slide lead",
+            h1 { "{title}" }
+        }
+    }
+}
+
+/// A topic's heading, before it has content.
+#[component]
+fn Topic(title: &'static str) -> Element {
+    rsx! {
+        div { class: "slide",
+            h2 { "{title}" }
+        }
+    }
 }
 
 #[component]
@@ -83,7 +144,7 @@ pub fn Title() -> Element {
     }
 }
 
-/// CONCEPT.md §1: the hook. Shared state behind a lock, and the whole room
+/// CONCEPT.md §1: the hook. Shared state behind a lock, and every task
 /// holding the `Arc`.
 #[component]
 pub fn MutexGameSlide() -> Element {
@@ -96,8 +157,8 @@ pub fn MutexGameSlide() -> Element {
     }
 }
 
-/// CONCEPT.md §2: the first future in the deck, and the first thing in the
-/// talk that happens without anyone in the room doing it.
+/// CONCEPT.md §2: the first future in the deck, and the first thing that
+/// happens without anyone doing it.
 #[component]
 pub fn TimerGameSlide() -> Element {
     rsx! {
@@ -197,7 +258,7 @@ pub fn CallGameSlide() -> Element {
     rsx! {
         div { class: "slide",
             h2 { "Call and response" }
-            p { class: "dim", "An mpsc message carrying a oneshot callback. You ask, then wait on your receiver; the presenter is the event loop that answers." }
+            p { class: "dim", "An mpsc message carrying a oneshot callback. You ask, then wait on your receiver; the actor is the event loop that answers." }
             CallGame {}
         }
     }
@@ -254,8 +315,8 @@ pub fn PipelineSlide() -> Element {
     }
 }
 
-/// CONCEPT.md §8: channels determine architecture, on a real server — the
-/// Protohackers Speed Daemon, stepped one actor at a time.
+/// CONCEPT.md §8: channels determine architecture — the Protohackers Speed
+/// Daemon, stepped one actor at a time.
 #[component]
 pub fn SpeeddSlide() -> Element {
     rsx! {
@@ -304,7 +365,8 @@ pub fn KaySlide() -> Element {
     }
 }
 
-/// The divider after Kay: what follows is extra, for questions or time left.
+/// The divider after Kay, for extra material if there are questions or time
+/// left over.
 #[component]
 pub fn BonusSlide() -> Element {
     rsx! {
@@ -367,25 +429,15 @@ pub fn UnitTestSlide() -> Element {
     }
 }
 
-/// The presenter's navigation overlay, in the marp idiom: it fades in when
+/// The viewer's navigation overlay, in the marp idiom: it fades in when
 /// the mouse moves and fades back out when it rests.
 ///
 /// A talk is mostly a still image, and a control bar parked over every
 /// slide is one more thing on the projector. Keyboard navigation is the
-/// primary interface — this is for when the presenter is holding a mouse.
+/// primary interface — this is for when you are holding a mouse.
 #[component]
 pub fn Chrome(slide: Signal<usize>, awake: Signal<bool>) -> Element {
-    let ctx: AppCtx = use_context();
-    let mode = use_context::<GameMode>();
     let current = slide() + 1;
-
-    // Only the presenter drives the deck. The server refuses these commands
-    // from anyone else, so this hides a control that would not have worked
-    // rather than enforcing anything. No hooks run above this point, so the
-    // early return cannot desynchronise them.
-    if !ctx.may_present() {
-        return rsx! {};
-    }
 
     rsx! {
         div { class: "chrome-zone",
@@ -394,14 +446,14 @@ pub fn Chrome(slide: Signal<usize>, awake: Signal<bool>) -> Element {
                 button {
                     class: "nav",
                     aria_label: "previous slide",
-                    onclick: move |_| ctx.step_slide(mode, slide, false),
+                    onclick: move |_| crate::step_slide(slide, false),
                     "←"
                 }
                 span { class: "counter", "{current} / {SLIDE_COUNT}" }
                 button {
                     class: "nav",
                     aria_label: "next slide",
-                    onclick: move |_| ctx.step_slide(mode, slide, true),
+                    onclick: move |_| crate::step_slide(slide, true),
                     "→"
                 }
             }

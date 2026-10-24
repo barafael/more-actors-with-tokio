@@ -1337,102 +1337,17 @@ strong {
 
 /* ---- identity: seat badge and the join code ---- */
 
-/* The deck root is focusable so `q` can be bound without a window
+/* The deck root is focusable so keys can be bound without a window
    listener, which would also fire in the static export. */
 .deck-root:focus,
 .deck-root:focus-visible {
     outline: none;
 }
 
-/* Sits under the topbar stripe, opposite the slide counter. */
-.seat-badge {
-    position: fixed;
-    top: calc(3% + 10px);
-    left: 16px;
-    z-index: 31;
-    padding: 4px 12px;
-    border-radius: 0;
-    font-family: var(--font-label);
-    font-size: 15px;
-    letter-spacing: 0.02em;
-    background: var(--color-background);
-    border: 2px solid var(--color-foreground);
-    color: var(--color-foreground);
-}
-
-/* A spectator is told plainly, rather than left clicking dead buttons. */
-.seat-badge.spectator {
-    border-style: dashed;
-    opacity: 0.65;
-}
-
-.seat-badge.presenter {
-    background: var(--color-highlight);
-    color: var(--color-background);
-    border-color: var(--color-highlight);
-}
-
-.join-overlay {
-    position: fixed;
-    inset: 0;
-    z-index: 50;
-    display: grid;
-    place-items: center;
-    background: rgba(0, 0, 0, 0.82);
-    cursor: zoom-out;
-}
-
-.join-card {
-    display: grid;
-    justify-items: center;
-    gap: 18px;
-    padding: 32px;
-    border-radius: 0;
-    background: var(--color-background);
-}
-
-/* The code is the point of the overlay: give it the room's whole height
-   budget and let the caption take what is left. */
-.join-qr {
-    width: min(62vh, 62vw);
-    height: min(62vh, 62vw);
-}
-
-.join-qr svg {
-    display: block;
-    width: 100%;
-    height: 100%;
-    shape-rendering: crispEdges;
-}
-
-.join-url {
-    margin: 0;
-    font-family: var(--font-label);
-    font-size: 24px;
-    color: var(--color-foreground);
-    overflow-wrap: anywhere;
-    text-align: center;
-}
-
-.join-count {
-    margin: 0;
-    font-size: 20px;
-    color: var(--color-highlight);
-}
-
-/* The static export: one browser, every role, nobody to present to. */
-
-/* `q` with no JOIN_URL configured: explain, do not show an empty card. */
-.join-missing {
-    margin: 0;
-    font-size: 26px;
-    color: var(--color-foreground);
-}
-
 /* ---- the clock-driven games: timer, select, loop-select ---- */
 
 /* The timer dial. Centred in the diagram, with the period boundaries marked
-   so the audience can see the next deadline approaching rather than being
+   so the viewer can see the next deadline approaching rather than being
    told about it after the fact. */
 
 .timer-game .timer-dial,
@@ -2279,12 +2194,6 @@ strong {
 
 .mx-task.failed {
     border-color: var(--color-red);
-}
-
-/* your own task, among two dozen */
-.mx-task.mine {
-    outline: 3px solid var(--color-highlight);
-    outline-offset: 2px;
 }
 
 /* the box in the middle: the mutex, an actor, a sink */

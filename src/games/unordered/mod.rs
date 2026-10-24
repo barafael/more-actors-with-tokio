@@ -52,7 +52,7 @@ pub fn UnorderedGame() -> Element {
     rsx! {
         div { class: "diagram board-game unordered-game",
             div { class: "game-header", "{set.name()}" }
-            div { class: "status", "single-player · you are the task, and the network" }
+            div { class: "status", "you are the task, and the network" }
 
             div { class: "bd-board",
                 svg { class: "arrow-layer bd-edges", view_box: "0 0 100 100", preserve_aspect_ratio: "none",

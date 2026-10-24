@@ -11,47 +11,28 @@ edition = "2021"
 
 [dependencies]
 sim-channels = { path = "crates/sim-channels" }
-dioxus = { version = "0.7.10", features = ["fullstack"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+dioxus = { version = "0.7.10", features = ["web"] }
 syntect = { version = "5.3", default-features = false, features = ["default-fancy"] }
 colorous = "1"
-qrcode = { version = "0.14", default-features = false, features = ["svg"] }
-# shared: the client logs through dioxus-logger, which is a tracing subscriber
+# the client logs through dioxus-logger, which is a tracing subscriber
 tracing = "0.1"
 dioxus-ssr = { version = "0.7", optional = true }
 
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
-tokio-util = { version = "0.7", features = ["rt"] }
-axum = { version = "0.8", features = ["ws"] }
-anyhow = "1"
-
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-web-sys = { version = "0.3", features = [
-    "WebSocket",
-    "MessageEvent",
-    "CloseEvent",
-    "ErrorEvent",
-    "BinaryType",
-    "Location",
-    "History",
-    "Performance",
-] }
-wasm-bindgen = "0.2"
-futures-util = { version = "0.3", default-features = false, features = ["std"] }
-futures-channel = "0.3"
+web-sys = { version = "0.3", features = ["Location", "Performance"] }
 gloo-timers = { version = "0.4", features = ["futures"] }
+# only for the export's bundle, see the `hydrate` feature
+dioxus-web = { version = "0.7.10", default-features = false, features = ["hydrate"], optional = true }
 
 [features]
 default = ["web"]
 web = ["dioxus/web"]
-server = ["dioxus/server"]
 export = ["dep:dioxus-ssr"]
-
-[dev-dependencies]
-tokio-tungstenite = "0.30"
-futures-util = { version = "0.3", default-features = false, features = ["std", "sink"] }
+# The export's pages are server-rendered and the client must adopt their DOM
+# rather than render a second deck beside it. `dx serve` serves an empty page
+# with no hydration payload, so this stays off for the live deck:
+# `dx build --platform web --features hydrate` builds the bundle the export ships.
+hydrate = ["dep:dioxus-web"]
 
 [[bin]]
 name = "export"

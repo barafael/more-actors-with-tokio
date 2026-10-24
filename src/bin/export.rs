@@ -1,18 +1,16 @@
 //! SSR batch export: renders every slide to a static HTML page ("print" mode
-//! from CONCEPT.md). Pages ship with the wasm client and a game-mode=local
-//! marker: on load, the client boots the same `Deck` tree that was
-//! server-rendered, and the games run single-player in the browser — same
-//! components, same sims, no server.
+//! from CONCEPT.md). Pages ship with the wasm client: on load, the client
+//! boots the same `Deck` tree that was server-rendered, and the games run in
+//! the browser — same components, same sims.
 use dioxus::prelude::*;
 
 use more_actors_with_tokio::slides::SLIDE_NAMES;
-use more_actors_with_tokio::{Deck, DeckProps, GameMode};
+use more_actors_with_tokio::{Deck, DeckProps};
 
 fn render_deck(index: usize) -> String {
     let mut dom = VirtualDom::new_with_props(
         Deck,
         DeckProps {
-            mode: GameMode::Local,
             initial_slide: index,
         },
     );
@@ -30,10 +28,10 @@ struct Nav {
 }
 
 fn page(title: &str, body: &str, nav: Option<&Nav>) -> String {
-    // The client's hydrate feature is compiled in, so the exported pages must
-    // carry root hydration data like the fullstack server does. Our app has no
-    // server functions; this is the byte-for-byte root payload the live server
-    // sends (capture again if use_server_futures are ever introduced).
+    // The bundle these pages ship is built with the `hydrate` feature, so they
+    // must carry root hydration data. The app has no server functions; this is the
+    // byte-for-byte root payload the hydrate runtime expects (capture again if
+    // use_server_futures are ever introduced).
     let hydration_data = "hoEY9vb2gRj1gRj1gRj1";
     let (nav_style, nav_html) = match nav {
         None => (String::new(), String::new()),
@@ -77,7 +75,6 @@ fn page(title: &str, body: &str, nav: Option<&Nav>) -> String {
     };
     format!(
         "<!doctype html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>{title}</title>\n\
-         <meta name=\"game-mode\" content=\"local\">\n\
          <link rel=\"stylesheet\" href=\"https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible&amp;family=Bitter:ital@0;1&amp;family=Fira+Mono&amp;family=Space+Mono:wght@400;700&amp;display=swap\">\n\
          <link rel=\"stylesheet\" href=\"main.css\">\n\
          <script>{STREAMING_INIT}</script>\n\
@@ -155,7 +152,7 @@ fn main() {
     match copy_dir(wasm_src, &out_dir.join("wasm")) {
         Ok(()) => println!("wasm bundle copied"),
         Err(e) => eprintln!(
-            "warning: no wasm bundle copied from {} ({e}); run `dx build --platform web` first — pages will stay static",
+            "warning: no wasm bundle copied from {} ({e}); run `dx build --platform web --features hydrate` first — pages will stay static",
             wasm_src.display()
         ),
     }

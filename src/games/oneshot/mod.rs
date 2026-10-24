@@ -1,7 +1,7 @@
 //! The oneshot minigame: one value, one sender, one receiver, and nothing
 //! you can do twice.
 //!
-//! Single-player, in the talk as in the export: it is an exercise in
+//! Single-player, live as in the export: it is an exercise in
 //! ownership, and ownership is personal. Each click is a call that takes a
 //! handle by value; the handle disappears from your hands and the call's
 //! result is written down, so what `send` and `.await` return — including
@@ -33,7 +33,6 @@ pub fn OneshotGame() -> Element {
     rsx! {
         div { class: "diagram oneshot-game",
             div { class: "game-header", "oneshot" }
-            div { class: "status", "single-player · your own channel" }
 
             div { class: "os-stage",
                 div { class: "os-half",

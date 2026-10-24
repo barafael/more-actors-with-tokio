@@ -1,0 +1,973 @@
+//! The button and timer futures, and the compositions built on them:
+//! `select!` over the two, that select spawned as a task, and that select in
+//! a loop.
+//!
+//! These are the deck's on-ramp. Before any channel appears, you watch one
+//! future resolve on its own (the timer), one resolve from real I/O (the
+//! button), then both race, then the race repeats forever. By the time an
+//! actor shows up, "a loop around a select" is a shape you have already seen
+//! move.
+
+use sim_channels::oneshot::OneshotCore;
+
+use crate::clock::Ticking;
+
+/// The timer future's period, in seconds: it resolves when the wall clock's
+/// seconds next reach a multiple of this.
+pub const TIMER_PERIOD_S: u64 = 10;
+
+/// How many completed rounds the loop-select tape shows.
+pub const LOOP_HISTORY: usize = 8;
+
+/// Milliseconds in the timer's period.
+const PERIOD_MS: f64 = TIMER_PERIOD_S as f64 * 1000.0;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Color {
+    Red,
+    Green,
+    Blue,
+}
+
+impl Color {
+    pub const ALL: [Color; 3] = [Color::Red, Color::Green, Color::Blue];
+
+    pub fn css_name(self) -> &'static str {
+        match self {
+            Color::Red => "red",
+            Color::Green => "green",
+            Color::Blue => "blue",
+        }
+    }
+
+    pub fn display(self) -> &'static str {
+        match self {
+            Color::Red => "Red",
+            Color::Green => "Green",
+            Color::Blue => "Blue",
+        }
+    }
+}
+
+/// Where the button future stands.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ButtonState {
+    #[default]
+    Idle,
+    Pending,
+    Ready(Color),
+}
+
+/// The button future: a `oneshot` channel whose value is the colour that
+/// resolved it. Activating creates the channel, pressing a button sends the
+/// one value it will ever carry.
+///
+/// `state` is a projection of the core; the channel itself is the truth.
+#[derive(Debug, Default)]
+pub struct ButtonSim {
+    pending: Option<OneshotCore<Color>>,
+    state: ButtonState,
+}
+
+impl ButtonSim {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn state(&self) -> ButtonState {
+        self.state
+    }
+
+    /// Create the future. A pending one is not replaced; a resolved one is
+    /// consumed, so activating again creates a new one. Whether a future
+    /// was created.
+    pub fn activate(&mut self) -> bool {
+        if self.state == ButtonState::Pending {
+            return false;
+        }
+        self.pending = Some(OneshotCore::new());
+        self.state = ButtonState::Pending;
+        true
+    }
+
+    /// Press a button. One value moves exactly once: a second press finds
+    /// the slot full and the send fails, leaving the resolved colour intact.
+    /// Whether this press resolved the future.
+    pub fn press(&mut self, color: Color) -> bool {
+        let Some(core) = self.pending.as_mut() else {
+            return false;
+        };
+        if core.send(color).is_err() {
+            return false;
+        }
+        self.state = ButtonState::Ready(color);
+        true
+    }
+}
+
+/// The timer future: activate it and it resolves at the next wall-clock
+/// instant whose seconds are a multiple of ten, yielding how long it waited.
+///
+/// The period is deliberately wall-clock aligned rather than a plain
+/// "sleep 10s". Aligning it is what makes the wait *visible*: the slide shows
+/// a seconds-of-the-minute dial, you can see the deadline coming,
+/// and — the actual lesson — activating at 0:07 waits three seconds while
+/// activating at 0:11 waits nine. A future's completion is an event in the
+/// world, not a stopwatch that starts when you ask.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct TimerSim {
+    /// When the pending future resolves, in sim-clock ms. `None` is idle.
+    deadline: Option<f64>,
+    /// When the pending future was activated, so the wait can be reported.
+    started: Option<f64>,
+    /// The last completed wait, in seconds.
+    resolved: Option<f64>,
+    now: f64,
+    /// Offset between the sim clock (monotonic, arbitrary origin) and the
+    /// seconds-of-the-minute the dial shows.
+    ///
+    /// The sim clock starts wherever the page loaded, so "a multiple of ten"
+    /// in sim time means nothing on the wall. The component supplies this
+    /// once so sim and dial align on the same epoch.
+    epoch_offset_ms: f64,
+}
+
+impl TimerSim {
+    /// `epoch_offset_ms` maps sim time onto wall time: the wall-clock
+    /// milliseconds-since-the-minute at sim time zero.
+    pub fn new(epoch_offset_ms: f64) -> Self {
+        Self {
+            epoch_offset_ms,
+            ..Self::default()
+        }
+    }
+
+    /// Where the dial's hand points: milliseconds into the current minute.
+    pub fn wall_ms(&self) -> f64 {
+        (self.now + self.epoch_offset_ms).rem_euclid(60_000.0)
+    }
+
+    pub fn pending(&self) -> bool {
+        self.deadline.is_some()
+    }
+
+    /// Time left on the pending future, or `None` when idle.
+    pub fn remaining_ms(&self) -> Option<f64> {
+        self.deadline.map(|due| (due - self.now).max(0.0))
+    }
+
+    /// What the last completed await yielded, in seconds.
+    pub fn waited_s(&self) -> Option<f64> {
+        self.resolved
+    }
+
+    /// The next instant, at or after `from`, whose seconds are a multiple of
+    /// the period.
+    ///
+    /// Strictly after: activating exactly on the tick waits a full period
+    /// rather than resolving instantly, which is both what an aligned sleep
+    /// does and the only answer that does not make the game look broken.
+    fn next_boundary(&self, from: f64) -> f64 {
+        let wall = from + self.epoch_offset_ms;
+        let elapsed = wall.rem_euclid(PERIOD_MS);
+        from + (PERIOD_MS - elapsed)
+    }
+
+    /// Await the timer: it resolves at the next period boundary. A pending
+    /// future is not restarted by asking again — the one you are awaiting is
+    /// the one that resolves. Whether a future was created.
+    pub fn activate(&mut self) -> bool {
+        if self.deadline.is_some() {
+            return false;
+        }
+        self.deadline = Some(self.next_boundary(self.now));
+        self.started = Some(self.now);
+        self.resolved = None;
+        true
+    }
+
+    /// Drop the pending future without awaiting it. Whether one was pending.
+    pub fn cancel(&mut self) -> bool {
+        self.started = None;
+        self.deadline.take().is_some()
+    }
+
+    /// Drop the resolved value and go back to idle, the way awaiting a
+    /// future consumes it.
+    pub fn consume(&mut self) {
+        self.resolved = None;
+    }
+}
+
+impl Ticking for TimerSim {
+    /// The seconds the future waited, on the frame it resolves.
+    type Event = f64;
+
+    fn sync_now(&mut self, now_ms: f64) {
+        self.now = now_ms;
+    }
+
+    fn next_delay_ms(&self) -> Option<f64> {
+        self.remaining_ms()
+    }
+
+    fn poll_due(&mut self) -> Vec<f64> {
+        let Some(due) = self.deadline else {
+            return Vec::new();
+        };
+        if due > self.now {
+            return Vec::new();
+        }
+        self.deadline = None;
+        let waited_s = self
+            .started
+            .take()
+            .map(|started| (due - started) / 1000.0)
+            .unwrap_or(TIMER_PERIOD_S as f64);
+        self.resolved = Some(waited_s);
+        vec![waited_s]
+    }
+}
+
+/// Which branch of the `select!` completed first.
+///
+/// Carries the branch's value, not just its name: the point of the slide is
+/// that a select yields whatever the winning future yielded, and the two
+/// branches yield different types.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Won {
+    Timer { waited_s: f64 },
+    Button { color: Color },
+}
+
+impl Won {
+    pub fn css_name(self) -> &'static str {
+        match self {
+            Won::Timer { .. } => "timer",
+            Won::Button { color } => color.css_name(),
+        }
+    }
+}
+
+/// `select!` over the two futures you have already met: the timer
+/// resolves on its own, the button resolves from real I/O, and whichever
+/// gets there first wins.
+///
+/// The losing branch is *dropped*, not awaited — that is the whole point of
+/// the beat, and the reason both halves are the real sims rather than a flat
+/// state machine with two slots. Cancelling the loser here is one line
+/// because the loser is a future that knows how to be cancelled.
+#[derive(Debug, Default)]
+pub struct SelectSim {
+    timer: TimerSim,
+    button: ButtonSim,
+    winner: Option<Won>,
+}
+
+impl SelectSim {
+    pub fn new(epoch_offset_ms: f64) -> Self {
+        Self {
+            timer: TimerSim::new(epoch_offset_ms),
+            ..Self::default()
+        }
+    }
+
+    /// Inside the select, with both branches live.
+    ///
+    /// Derived rather than stored: arming activates the timer and settling
+    /// cancels it, so a separate flag would be a second copy of the same
+    /// fact with three places to drift.
+    pub fn armed(&self) -> bool {
+        self.timer.pending()
+    }
+
+    pub fn timer(&self) -> TimerSim {
+        self.timer
+    }
+
+    /// The branch that won, once one has.
+    pub fn winner(&self) -> Option<Won> {
+        self.winner
+    }
+
+    /// Enter the select: `select!` polls each branch, so entering it is
+    /// what creates both futures. Entering again starts a fresh race.
+    pub fn arm(&mut self) {
+        self.timer.cancel();
+        self.timer.consume();
+        self.timer.activate();
+        self.button = ButtonSim::new();
+        self.button.activate();
+        self.winner = None;
+    }
+
+    /// Press a button. Decides the race if the select is live and the button
+    /// branch has not been dropped. The winner, if this press decided it.
+    pub fn press(&mut self, color: Color) -> Option<Won> {
+        if !self.armed() || !self.button.press(color) {
+            return None;
+        }
+        Some(self.settle(Won::Button { color }))
+    }
+
+    /// Leave the select, dropping both branches.
+    pub fn reset(&mut self) {
+        self.winner = None;
+        self.timer.cancel();
+        self.timer.consume();
+        self.button = ButtonSim::new();
+    }
+
+    /// Whichever branch completed first takes the select; the other is
+    /// dropped mid-flight.
+    fn settle(&mut self, won: Won) -> Won {
+        self.winner = Some(won);
+        // Cancel the loser, exactly as `select!` drops the branch it did not
+        // take: the timer stops counting, the button stops accepting presses.
+        //
+        // Only the loser. A timer that won has just put its duration in
+        // `resolved`, and that value is what the slide exists to show —
+        // consuming it here would style the branch as the winner while
+        // rendering an empty one.
+        match won {
+            Won::Timer { .. } => self.button = ButtonSim::new(),
+            Won::Button { .. } => {
+                self.timer.cancel();
+                self.timer.consume();
+            }
+        }
+        won
+    }
+}
+
+impl Ticking for SelectSim {
+    /// The winner, on the frame the timer branch takes the race.
+    type Event = Won;
+
+    fn sync_now(&mut self, now_ms: f64) {
+        self.timer.sync_now(now_ms);
+    }
+
+    fn next_delay_ms(&self) -> Option<f64> {
+        // only the timer branch is clock-driven; the button waits on a click
+        self.timer.next_delay_ms()
+    }
+
+    fn poll_due(&mut self) -> Vec<Won> {
+        self.timer
+            .poll_due()
+            .into_iter()
+            .map(|waited_s| self.settle(Won::Timer { waited_s }))
+            .collect()
+    }
+}
+
+/// The same select, handed to `tokio::spawn`: the future now runs as a task
+/// on its own, and the caller keeps only the `JoinHandle`.
+///
+/// Nothing about the race changes. What the slide adds is the handle: it is
+/// pending while the select is live and finished, with the winner as its
+/// output, once the select is decided.
+#[derive(Debug, Default)]
+pub struct SpawnSim {
+    select: SelectSim,
+    /// Tasks spawned so far, which is also the newest task's id.
+    spawned: u64,
+}
+
+impl SpawnSim {
+    pub fn new(epoch_offset_ms: f64) -> Self {
+        Self {
+            select: SelectSim::new(epoch_offset_ms),
+            spawned: 0,
+        }
+    }
+
+    pub fn select(&self) -> &SelectSim {
+        &self.select
+    }
+
+    /// The id of the last spawned task, whose `JoinHandle` the slide holds.
+    pub fn task(&self) -> Option<u64> {
+        (self.spawned > 0).then_some(self.spawned)
+    }
+
+    /// `tokio::spawn` the select. One task at a time: a second spawn would
+    /// drop the first handle and detach a task the slide could no longer
+    /// show. Whether a task was spawned.
+    pub fn spawn(&mut self) -> bool {
+        if self.select.armed() {
+            return false;
+        }
+        self.spawned += 1;
+        self.select.arm();
+        true
+    }
+
+    pub fn press(&mut self, color: Color) -> Option<Won> {
+        self.select.press(color)
+    }
+}
+
+impl Ticking for SpawnSim {
+    type Event = Won;
+
+    fn sync_now(&mut self, now_ms: f64) {
+        self.select.sync_now(now_ms);
+    }
+
+    fn next_delay_ms(&self) -> Option<f64> {
+        self.select.next_delay_ms()
+    }
+
+    fn poll_due(&mut self) -> Vec<Won> {
+        self.select.poll_due()
+    }
+}
+
+/// One completed trip around the loop.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Round {
+    /// 1-based, and never reused: the tape keys its cells on it.
+    pub round: u64,
+    pub won: Won,
+}
+
+/// The same select, in a loop: when a branch wins, the result is recorded
+/// and the select is entered again.
+///
+/// This is the last slide before an actor appears, and it is deliberately
+/// the same picture as one: a piece of state, a loop, and a `select!` that
+/// is the only thing that ever touches that state. The only missing piece by
+/// the end of it is the inbox — which is the next chapter.
+#[derive(Debug, Default)]
+pub struct LoopSelectSim {
+    select: SelectSim,
+    running: bool,
+    /// The last `LOOP_HISTORY` rounds, oldest first.
+    history: Vec<Round>,
+    /// Rounds completed since the loop was built.
+    ///
+    /// Kept alongside the tape rather than read off it: `Round::round` is
+    /// promised never to be reused (the tape keys its cells on it), and
+    /// emptying the tape must not restart the numbering.
+    rounds: u64,
+}
+
+impl LoopSelectSim {
+    pub fn new(epoch_offset_ms: f64) -> Self {
+        Self {
+            select: SelectSim::new(epoch_offset_ms),
+            ..Self::default()
+        }
+    }
+
+    pub fn running(&self) -> bool {
+        self.running
+    }
+
+    pub fn select(&self) -> &SelectSim {
+        &self.select
+    }
+
+    pub fn history(&self) -> &[Round] {
+        &self.history
+    }
+
+    /// Rounds completed, which is also the newest round's number.
+    pub fn rounds(&self) -> u64 {
+        self.rounds
+    }
+
+    /// Enter the loop. Whether it was not already running.
+    pub fn start(&mut self) -> bool {
+        if self.running {
+            return false;
+        }
+        self.running = true;
+        self.select.arm();
+        true
+    }
+
+    /// Break out of the loop, which leaves the current select dropped
+    /// mid-await — what returning from the loop body does.
+    pub fn stop(&mut self) {
+        self.running = false;
+        self.select.reset();
+    }
+
+    pub fn press(&mut self, color: Color) -> Option<Round> {
+        if !self.running {
+            return None;
+        }
+        let won = self.select.press(color)?;
+        Some(self.record(won))
+    }
+
+    /// Empty the tape without breaking the loop.
+    pub fn clear(&mut self) {
+        self.history.clear();
+    }
+
+    /// Record a completed round and go around again.
+    fn record(&mut self, won: Won) -> Round {
+        self.rounds += 1;
+        let entry = Round {
+            round: self.rounds,
+            won,
+        };
+        self.history.push(entry);
+        // The slide shows a running tape, not a transcript: only the last
+        // few rounds are legible from the back of a room, and a talk that
+        // runs for an hour would otherwise accumulate hundreds.
+        if self.history.len() > LOOP_HISTORY {
+            self.history.remove(0);
+        }
+        if self.running {
+            self.select.arm();
+        }
+        entry
+    }
+}
+
+impl Ticking for LoopSelectSim {
+    /// The round the timer branch completed, on that frame.
+    type Event = Round;
+
+    fn sync_now(&mut self, now_ms: f64) {
+        self.select.sync_now(now_ms);
+    }
+
+    fn next_delay_ms(&self) -> Option<f64> {
+        if !self.running {
+            return None;
+        }
+        self.select.next_delay_ms()
+    }
+
+    fn poll_due(&mut self) -> Vec<Round> {
+        if !self.running {
+            return Vec::new();
+        }
+        self.select
+            .poll_due()
+            .into_iter()
+            .map(|won| self.record(won))
+            .collect()
+    }
+}
+
+#[cfg(test)]
+mod button_tests {
+    use super::*;
+
+    #[test]
+    fn button_future_lifecycle() {
+        let mut sim = ButtonSim::new();
+        assert_eq!(sim.state(), ButtonState::Idle);
+        assert!(sim.activate());
+        assert_eq!(sim.state(), ButtonState::Pending);
+        assert!(sim.press(Color::Green));
+        assert_eq!(sim.state(), ButtonState::Ready(Color::Green));
+        // one value moves exactly once
+        assert!(!sim.press(Color::Red));
+        assert_eq!(sim.state(), ButtonState::Ready(Color::Green));
+        // a resolved future is consumed; activating creates a new one
+        assert!(sim.activate());
+        assert_eq!(sim.state(), ButtonState::Pending);
+        // pressing while idle does nothing
+        let mut idle = ButtonSim::new();
+        assert!(!idle.press(Color::Red));
+    }
+
+    #[test]
+    fn activating_a_pending_future_does_not_replace_it() {
+        let mut sim = ButtonSim::new();
+        sim.activate();
+        assert!(!sim.activate());
+    }
+}
+
+#[cfg(test)]
+mod timer_tests {
+    use super::*;
+
+    /// A timer aligned to the minute: sim time zero is the top of a minute.
+    fn timer() -> TimerSim {
+        TimerSim::new(0.0)
+    }
+
+    #[test]
+    fn activating_waits_until_the_next_multiple_of_ten() {
+        let mut timer = timer();
+        timer.sync_now(3_000.0);
+        assert!(timer.activate());
+        assert_eq!(timer.remaining_ms(), Some(7_000.0));
+
+        // nothing is due before the boundary
+        assert!(timer.tick(9_999.0).is_empty());
+        assert_eq!(timer.next_delay_ms(), Some(1.0));
+
+        assert_eq!(timer.tick(10_000.0), vec![7.0]);
+        assert_eq!(timer.waited_s(), Some(7.0));
+    }
+
+    #[test]
+    fn the_wait_depends_on_when_you_asked() {
+        // the beat of the slide: same future, same period, different wait
+        let mut early = timer();
+        early.sync_now(1_000.0);
+        early.activate();
+        assert_eq!(early.remaining_ms(), Some(9_000.0));
+
+        let mut late = timer();
+        late.sync_now(9_000.0);
+        late.activate();
+        assert_eq!(late.remaining_ms(), Some(1_000.0));
+    }
+
+    #[test]
+    fn activating_exactly_on_the_boundary_waits_a_whole_period() {
+        // resolving instantly would make the game look broken, and an
+        // aligned sleep does not do it either
+        let mut timer = timer();
+        timer.sync_now(10_000.0);
+        timer.activate();
+        assert_eq!(timer.remaining_ms(), Some(10_000.0));
+    }
+
+    #[test]
+    fn the_resolving_frame_is_the_one_that_stops_having_a_delay() {
+        let mut timer = TimerSim::new(0.0);
+        timer.sync_now(3_000.0);
+        timer.activate();
+        assert!(timer.next_delay_ms().is_some(), "counting down");
+
+        assert_eq!(timer.tick(10_000.0), vec![7.0]);
+        assert_eq!(timer.next_delay_ms(), None, "and now reads as idle");
+        assert_eq!(timer.waited_s(), Some(7.0), "with the value kept");
+    }
+
+    #[test]
+    fn polling_twice_at_the_same_instant_resolves_once() {
+        // the idempotence the Ticking contract promises drivers
+        let mut timer = timer();
+        timer.sync_now(0.0);
+        timer.activate();
+        assert_eq!(timer.tick(10_000.0).len(), 1);
+        assert!(timer.poll_due().is_empty(), "already resolved");
+    }
+
+    #[test]
+    fn an_idle_timer_is_not_waiting_on_the_clock() {
+        let mut timer = timer();
+        assert_eq!(timer.next_delay_ms(), None, "idle waits on a click");
+        timer.sync_now(0.0);
+        timer.activate();
+        assert_eq!(timer.next_delay_ms(), Some(10_000.0));
+    }
+
+    #[test]
+    fn re_activating_a_pending_timer_does_not_restart_it() {
+        let mut timer = timer();
+        timer.sync_now(3_000.0);
+        timer.activate();
+        assert!(!timer.activate());
+        // still the original deadline, not one 10s from the second ask
+        assert_eq!(timer.tick(10_000.0), vec![7.0]);
+    }
+
+    #[test]
+    fn cancelling_a_pending_timer_stops_the_clock() {
+        let mut timer = timer();
+        timer.sync_now(0.0);
+        timer.activate();
+        assert!(timer.cancel());
+        assert_eq!(timer.next_delay_ms(), None);
+        assert!(
+            timer.tick(60_000.0).is_empty(),
+            "a dropped future never fires"
+        );
+    }
+
+    #[test]
+    fn cancelling_an_idle_timer_says_nothing() {
+        assert!(!timer().cancel());
+    }
+
+    #[test]
+    fn the_dial_wraps_at_a_minute() {
+        let mut timer = timer();
+        timer.sync_now(61_500.0);
+        assert_eq!(timer.wall_ms(), 1_500.0);
+    }
+
+    #[test]
+    fn the_epoch_offset_aligns_the_dial_to_the_wall() {
+        // sim zero happens 4s into a minute: the first boundary is 6s later
+        let mut timer = TimerSim::new(4_000.0);
+        timer.sync_now(0.0);
+        assert_eq!(timer.wall_ms(), 4_000.0);
+        timer.activate();
+        assert_eq!(timer.remaining_ms(), Some(6_000.0));
+    }
+
+    #[test]
+    fn the_period_divides_the_dial_evenly() {
+        // the dial draws one tick per period; a remainder would leave a gap
+        assert_eq!(60 % TIMER_PERIOD_S, 0);
+    }
+}
+
+#[cfg(test)]
+mod select_tests {
+    use super::*;
+
+    fn armed() -> SelectSim {
+        let mut select = SelectSim::new(0.0);
+        select.sync_now(0.0);
+        select.arm();
+        assert!(select.armed());
+        select
+    }
+
+    #[test]
+    fn the_button_can_beat_the_timer() {
+        let mut select = armed();
+        assert_eq!(
+            select.press(Color::Red),
+            Some(Won::Button { color: Color::Red })
+        );
+        // the timer branch was dropped, so it never fires
+        assert_eq!(select.next_delay_ms(), None);
+        assert!(select.tick(60_000.0).is_empty());
+    }
+
+    #[test]
+    fn the_timer_can_beat_the_button() {
+        let mut select = armed();
+        assert_eq!(select.tick(10_000.0), vec![Won::Timer { waited_s: 10.0 }]);
+        // the button branch was dropped: a late press decides nothing
+        assert_eq!(select.press(Color::Blue), None);
+        assert_eq!(
+            select.winner(),
+            Some(Won::Timer { waited_s: 10.0 }),
+            "the first winner stands",
+        );
+        // The winning branch must still carry what it yielded: the slide
+        // styles it as the winner and then renders this value inside it.
+        assert_eq!(
+            select.timer().waited_s(),
+            Some(10.0),
+            "a winning timer keeps its duration",
+        );
+    }
+
+    #[test]
+    fn a_press_before_arming_decides_nothing() {
+        let mut select = SelectSim::new(0.0);
+        assert_eq!(select.press(Color::Green), None);
+        assert_eq!(select.winner(), None);
+    }
+
+    #[test]
+    fn an_unarmed_select_is_not_waiting_on_the_clock() {
+        assert_eq!(SelectSim::new(0.0).next_delay_ms(), None);
+    }
+
+    #[test]
+    fn arming_again_starts_a_fresh_race() {
+        let mut select = armed();
+        select.press(Color::Red);
+        select.sync_now(1_000.0);
+        select.arm();
+        assert_eq!(select.winner(), None, "the new race is undecided");
+        assert_eq!(select.next_delay_ms(), Some(9_000.0));
+        // and its button branch is live again
+        assert!(select.press(Color::Green).is_some());
+    }
+
+    #[test]
+    fn resetting_drops_both_branches() {
+        let mut select = armed();
+        select.reset();
+        assert_eq!(select.next_delay_ms(), None);
+        assert!(!select.armed());
+    }
+
+    #[test]
+    fn a_winner_names_a_css_class_per_branch() {
+        // the tape colours cells by branch, so these must not collide
+        assert_eq!(Won::Timer { waited_s: 3.0 }.css_name(), "timer");
+        assert_eq!(Won::Button { color: Color::Red }.css_name(), "red");
+    }
+}
+
+#[cfg(test)]
+mod loop_select_tests {
+    use super::*;
+
+    fn running() -> LoopSelectSim {
+        let mut looping = LoopSelectSim::new(0.0);
+        looping.sync_now(0.0);
+        assert!(looping.start());
+        assert!(looping.select().armed());
+        looping
+    }
+
+    #[test]
+    fn a_win_records_a_round_and_re_arms() {
+        let mut looping = running();
+        assert_eq!(
+            looping.tick(10_000.0),
+            vec![Round {
+                round: 1,
+                won: Won::Timer { waited_s: 10.0 },
+            }],
+        );
+        assert_eq!(looping.rounds(), 1);
+        assert!(
+            looping.select().armed(),
+            "the loop goes around again by itself"
+        );
+        assert_eq!(looping.next_delay_ms(), Some(10_000.0));
+    }
+
+    #[test]
+    fn the_loop_keeps_going_around() {
+        let mut looping = running();
+        looping.tick(10_000.0);
+        looping.press(Color::Red);
+        looping.tick(20_000.0);
+
+        assert_eq!(looping.rounds(), 3);
+        assert_eq!(
+            looping
+                .history()
+                .iter()
+                .map(|entry| entry.won)
+                .collect::<Vec<_>>(),
+            vec![
+                Won::Timer { waited_s: 10.0 },
+                Won::Button { color: Color::Red },
+                Won::Timer { waited_s: 10.0 },
+            ],
+        );
+    }
+
+    #[test]
+    fn the_tape_keeps_only_the_recent_rounds() {
+        let mut looping = running();
+        for round in 1..=(LOOP_HISTORY + 3) {
+            looping.press(Color::Blue);
+            assert_eq!(looping.rounds(), round as u64);
+        }
+        assert_eq!(looping.history().len(), LOOP_HISTORY);
+        assert_eq!(
+            looping.history().last().expect("a round was played").round,
+            (LOOP_HISTORY + 3) as u64,
+            "the tape keeps the newest, not the oldest",
+        );
+    }
+
+    #[test]
+    fn stopping_breaks_out_and_drops_the_pending_select() {
+        let mut looping = running();
+        looping.stop();
+        assert_eq!(looping.next_delay_ms(), None);
+        assert!(looping.tick(60_000.0).is_empty(), "a stopped loop is inert");
+        assert!(!looping.select().armed());
+    }
+
+    #[test]
+    fn a_press_while_stopped_decides_nothing() {
+        let mut looping = LoopSelectSim::new(0.0);
+        assert_eq!(looping.press(Color::Red), None);
+        assert_eq!(looping.rounds(), 0);
+    }
+
+    #[test]
+    fn starting_a_running_loop_is_a_no_op() {
+        assert!(!running().start());
+    }
+
+    #[test]
+    fn clearing_the_tape_does_not_restart_round_numbering() {
+        // `Round::round` is promised never to be reused — the tape keys its
+        // cells on it, and a repeated key lets Dioxus reuse a stale node —
+        // so emptying the tape must not reset the counter.
+        let mut looping = running();
+        looping.press(Color::Red);
+        looping.clear();
+        looping.press(Color::Blue);
+
+        assert_eq!(looping.rounds(), 2, "the counter survives the clear");
+        assert_eq!(
+            looping.history().first().map(|entry| entry.round),
+            Some(2),
+            "the round after a clear is numbered 2, not 1",
+        );
+    }
+
+    #[test]
+    fn clearing_empties_the_tape_without_stopping_the_loop() {
+        let mut looping = running();
+        looping.tick(10_000.0);
+        looping.clear();
+        assert!(looping.history().is_empty());
+        assert!(
+            looping.running(),
+            "clearing the tape does not break the loop"
+        );
+    }
+}
+
+#[cfg(test)]
+mod spawn_tests {
+    use super::*;
+
+    #[test]
+    fn nothing_is_spawned_until_asked() {
+        let spawn = SpawnSim::new(0.0);
+        assert_eq!(spawn.task(), None);
+        assert_eq!(spawn.next_delay_ms(), None);
+    }
+
+    #[test]
+    fn spawning_hands_back_a_pending_handle() {
+        let mut spawn = SpawnSim::new(0.0);
+        spawn.sync_now(0.0);
+        assert!(spawn.spawn());
+        assert_eq!(spawn.task(), Some(1));
+        assert!(spawn.select().armed(), "the task is running the select");
+    }
+
+    #[test]
+    fn a_second_spawn_waits_for_the_first_task() {
+        let mut spawn = SpawnSim::new(0.0);
+        spawn.spawn();
+        assert!(!spawn.spawn());
+        assert_eq!(spawn.task(), Some(1));
+    }
+
+    #[test]
+    fn the_select_winner_is_the_task_output() {
+        let mut spawn = SpawnSim::new(0.0);
+        spawn.sync_now(0.0);
+        spawn.spawn();
+        assert_eq!(spawn.tick(10_000.0), vec![Won::Timer { waited_s: 10.0 }]);
+        assert!(!spawn.select().armed(), "the task finished");
+        assert_eq!(spawn.select().winner(), Some(Won::Timer { waited_s: 10.0 }));
+
+        // and a finished task makes room for the next one
+        spawn.spawn();
+        spawn.press(Color::Green);
+        assert_eq!(spawn.task(), Some(2));
+        assert_eq!(
+            spawn.select().winner(),
+            Some(Won::Button {
+                color: Color::Green
+            }),
+        );
+    }
+}

@@ -1,390 +1,200 @@
-//! The mpsc minigame: every connected client is a `Sender<T>` handle drawn as
-//! a colored node, cloning creates extra handles for the presenter, values
-//! fly along the arrows, a full buffer blocks (gray) senders until a receive
-//! frees a slot. Blocked senders wake in FIFO order, like tokio's.
+//! The mpsc minigame: every `Sender<T>` handle is a colored node, cloning
+//! creates extra handles, values fly along the arrows, and a full buffer
+//! parks (gray) senders until a receive frees a slot. Parked senders wake in
+//! FIFO order, like tokio's.
 
 mod layout;
-mod state;
+mod model;
 
 use dioxus::prelude::*;
 
-use crate::clock::Ticking;
-use crate::games::{use_game_connection, GameConnection, Waited};
-use crate::protocol::{MpscEvent, MpscSnapshot, MpscWire, SenderInfo, MPSC_CAPACITY};
-use crate::sim::{now_ms, MpscSim, LOCAL_CONN};
-use crate::{AppCtx, GameMode};
-
-use crate::games::palette;
-use crate::games::ticker::use_clock;
+use crate::games::ticker::{act_now, use_clock, use_tick};
+use crate::games::{palette, Waited};
 use layout::{ARROW_X0, ARROW_X1, RECEIVER_CY};
-use state::{ChannelState, Flight};
+use model::{MpscSim, Sender, Value, CAPACITY, ORIGINAL};
 
-fn local_sim() -> MpscSim {
-    #[cfg(target_arch = "wasm32")]
-    let flight_ms = crate::protocol::MPSC_FLIGHT_MS as f64;
-    #[cfg(not(target_arch = "wasm32"))]
-    let flight_ms = 0.0;
-    let mut sim = MpscSim::new(flight_ms);
-    sim.add_sender(LOCAL_CONN, LOCAL_CONN);
-    sim
-}
-
-fn initial_snapshot(mode: GameMode) -> MpscSnapshot {
-    match mode {
-        GameMode::Local => {
-            let mut sim = local_sim();
-            sim.sync_now(now_ms());
-            sim.snapshot()
-        }
-        GameMode::Remote => state::empty_snapshot(),
-    }
-}
-
-/// Local (loopback) driver: handle the wire against the in-browser sim and
-/// republish its snapshot, mirroring what the server actor broadcasts.
-fn dispatch_local(mut sim: Signal<MpscSim>, chan: ChannelState, wire: MpscWire) {
-    let events = sim.with_mut(|s| {
-        s.sync_now(now_ms());
-        let events = s.handle(&wire, LOCAL_CONN);
-        for event in &events {
-            chan.apply(event.clone());
-        }
-        s.poll_due()
-    });
-    for event in events {
-        chan.apply(event);
-    }
-    chan.set_snapshot(sim.read().snapshot());
-}
-
-/// Route a wire to the in-browser sim (single-player) or over the game
-/// socket. Every call site goes through here so the two modes cannot drift.
-fn dispatch(conn: GameConnection, sim: Signal<MpscSim>, chan: ChannelState, wire: MpscWire) {
-    if conn.is_local() {
-        dispatch_local(sim, chan, wire);
+fn fresh_sim() -> MpscSim {
+    // The export renders one frame natively and never ticks, so a flight
+    // there would hang mid-air in the snapshot; land them at once instead.
+    MpscSim::new(if cfg!(target_arch = "wasm32") {
+        model::FLIGHT_MS
     } else {
-        conn.send(&wire);
-    }
-}
-
-fn send_from(
-    conn: GameConnection,
-    sim: Signal<MpscSim>,
-    chan: ChannelState,
-    mut drafts: Signal<Vec<(u64, char)>>,
-    sender: u64,
-) {
-    let draft = drafts
-        .read()
-        .iter()
-        .find(|(c, _)| *c == sender)
-        .map(|(_, ch)| *ch);
-    if let Some(ch) = draft {
-        dispatch(conn, sim, chan, MpscWire::Send { conn: sender, ch });
-        drafts.with_mut(|d| d.retain(|(c, _)| *c != sender));
-    }
-}
-
-fn set_draft(mut drafts: Signal<Vec<(u64, char)>>, sender: u64, ch: Option<char>) {
-    drafts.with_mut(|d| {
-        d.retain(|(c, _)| *c != sender);
-        if let Some(ch) = ch {
-            d.push((sender, ch));
-        }
-    });
-}
-
-fn restart(conn: GameConnection, ctx: AppCtx, mut sim: Signal<MpscSim>, mut chan: ChannelState) {
-    if conn.is_local() {
-        sim.set(local_sim());
-        chan.set_snapshot(sim.read().snapshot());
-        chan.flights.set(Vec::new());
-        conn.set_status("single-player");
-    } else {
-        ctx.send(crate::AppUp::Restart {
-            game: crate::protocol::Game::Mpsc,
-        });
-    }
+        0.0
+    })
 }
 
 #[component]
 pub fn MpscGame() -> Element {
-    let ctx: AppCtx = use_context();
-    let mode = use_context::<GameMode>();
-
-    let sim = use_signal(local_sim);
-    let chan = ChannelState {
-        snap: use_signal(move || initial_snapshot(mode)),
-        flights: use_signal(Vec::new),
-        key: use_signal(|| 0u64),
-        received_at: use_signal(now_ms),
-    };
-    // Local mode has no socket and therefore no `Hello`: the single player
-    // owns every handle from the start (same convention as the broadcast
-    // game). Remote waits for the server to assign a connection.
-    let mut my_conn: Signal<Option<u64>> = use_signal(|| match mode {
-        GameMode::Local => Some(LOCAL_CONN),
-        GameMode::Remote => None,
-    });
-    let drafts = use_signal(Vec::<(u64, char)>::new);
-    let mut next_local_conn = use_signal(|| LOCAL_CONN + 1);
-
-    let conn = use_game_connection::<MpscEvent>("/ws/game/mpsc", move |event| {
-        if let MpscEvent::Hello { conn } = event {
-            my_conn.set(Some(conn));
-        } else {
-            chan.apply(event);
-        }
-    });
-
-    // The presenter slot gates cloning server-side. Only a connection the
-    // server granted the presenter role bothers asking; the server refuses
-    // anyone else, so this is just avoiding a pointless round trip.
-    use_effect(move || {
-        if conn.connected() && !conn.is_local() && my_conn().is_some() && ctx.may_present() {
-            conn.send(&MpscWire::ClaimPresenter);
-        }
-    });
-
-    // Local flights land on a tick, driven by the sim's own clock. The task
-    // is spawned through dioxus so it is cancelled when the component
-    // unmounts; a bare loop would keep ticking against dead signals.
-    #[cfg(target_arch = "wasm32")]
-    use_future(move || {
-        let mut sim = sim;
-        let chan = chan;
-        async move {
-            if !conn.is_local() {
-                return;
-            }
-            loop {
-                gloo_timers::future::TimeoutFuture::new(50).await;
-                let landed = sim.with_mut(|s| s.tick(now_ms()));
-                let landed_any = !landed.is_empty();
-                for event in landed {
-                    chan.apply(event);
-                }
-                if landed_any {
-                    chan.set_snapshot(sim.read().snapshot());
-                }
-            }
-        }
-    });
-
-    // The arrows and flights only care who the senders are and whether they
-    // are blocked. A parked send's duration changes with every snapshot, so
-    // leave it out, or each snapshot would redraw every arrow.
-    let senders = use_memo(move || {
-        chan.snap
-            .read()
-            .senders
-            .iter()
-            .map(|s| SenderInfo {
-                blocked_for_ms: None,
-                ..*s
-            })
-            .collect::<Vec<_>>()
-    });
-    let flights = use_memo(move || chan.flights.read().clone());
-    let nodes = use_memo(move || {
-        let snap = chan.snap.read();
-        let flights = chan.flights.read();
-        snap.senders
-            .iter()
-            .enumerate()
-            .map(|(i, s)| {
-                let (top, height) = layout::sender_geometry(i, snap.senders.len());
-                let queued = snap
-                    .blocked_sends
-                    .iter()
-                    .find(|b| b.conn == s.conn)
-                    .map(|pending| pending.ch);
-                // a value in hand outranks the handle's name: while a send
-                // is parked or in flight, the node shows what it is carrying
-                let label = queued
-                    .or_else(|| flights.iter().find(|f| f.conn == s.conn).map(|f| f.ch))
-                    .map(|ch| ch.to_string())
-                    .unwrap_or_else(|| format!("tx #{}", s.conn));
-                NodeView {
-                    sender: *s,
-                    label,
-                    for_ms: s.blocked_for_ms,
-                    top,
-                    height,
-                }
-            })
-            .collect::<Vec<NodeView>>()
-    });
-    let controls = use_memo(move || {
-        let snap = chan.snap.read();
-        let drafts = drafts.read();
-        // Before `Hello` arrives this client has no identity yet. Falling
-        // back to 0 would match LOCAL_CONN / the broadcast host handle and
-        // briefly show another party's controls as our own.
-        let my = my_conn();
-        snap.senders
-            .iter()
-            .filter(|s| Some(s.owner) == my)
-            .map(|s| ControlsView {
-                conn: s.conn,
-                blocked: s.blocked,
-                cy: layout::sender_cy(&snap.senders, s.conn),
-                draft: drafts
-                    .iter()
-                    .find(|(c, _)| *c == s.conn)
-                    .map(|(_, ch)| ch.to_string())
-                    .unwrap_or_default(),
-            })
-            .collect::<Vec<ControlsView>>()
-    });
-
-    // While a send is parked on the full queue its node counts the wait;
-    // the badge reads the frame clock itself, so only it redraws.
+    let mut sim = use_signal(fresh_sim);
+    // While a send is parked its node counts the wait; the badge reads the
+    // frame clock itself, so only it redraws. Flights land on the same clock.
     let clock = use_clock();
+    use_tick(sim, clock);
+    // what each handle's input box holds: view state, not channel state
+    let mut drafts = use_signal(Vec::<(u64, char)>::new);
 
-    let blocked_count = use_memo(move || {
-        chan.snap
+    let channel = sim.read();
+    let senders = channel.senders();
+    let handles: Vec<u64> = senders.iter().map(|s| s.handle).collect();
+    let parked_sends = channel.parked_sends();
+    let flights: Vec<(u64, Value)> = channel.flights().map(|f| (f.key, f.value)).collect();
+    let buffer = channel.buffer();
+    let occupancy = channel.occupancy();
+    let waiting = channel.waiting_receive();
+    let last = channel.last_received();
+    let closed = channel.closed();
+    drop(channel);
+    let buffer_empty = buffer.is_empty() && flights.is_empty();
+    let parked_count = senders.iter().filter(|s| s.parked_since.is_some()).count();
+
+    let draft_of = move |handle: u64| {
+        drafts
             .read()
-            .senders
             .iter()
-            .filter(|s| s.blocked)
-            .count()
-    });
+            .find(|(h, _)| *h == handle)
+            .map(|(_, ch)| *ch)
+    };
+    let mut set_draft = move |handle: u64, ch: Option<char>| {
+        drafts.with_mut(|d| {
+            d.retain(|(h, _)| *h != handle);
+            if let Some(ch) = ch {
+                d.push((handle, ch));
+            }
+        });
+    };
+    let mut send_from = move |handle: u64| {
+        if let Some(ch) = draft_of(handle) {
+            act_now(sim, |s| s.send(handle, ch));
+            set_draft(handle, None);
+        }
+    };
 
     rsx! {
         div { class: "diagram mpsc-game",
             div { class: "game-header", "mpsc" }
-            div { class: "status", "{conn.status}" }
 
-            ArrowLayer { senders: senders() }
+            ArrowLayer { handles: handles.clone() }
 
-            for node in nodes() {
-                SenderNode { key: "{node.sender.conn}", node, at: (chan.received_at)(), clock }
+            for (i, sender) in senders.iter().copied().enumerate() {
+                SenderNode {
+                    key: "{sender.handle}",
+                    sender,
+                    // a value in hand outranks the handle's name: while a
+                    // send is parked or in flight, the node shows what it is
+                    // carrying
+                    label: parked_sends
+                        .iter()
+                        .chain(flights.iter().map(|(_, v)| v))
+                        .find(|v| v.from == sender.handle)
+                        .map(|v| v.ch.to_string())
+                        .unwrap_or_else(|| format!("tx #{}", sender.handle)),
+                    geometry: layout::sender_geometry(i, senders.len()),
+                    clock,
+                }
             }
 
-            FlightLayer { flights: flights(), senders: senders() }
+            for (key, value) in flights.iter().copied() {
+                span {
+                    key: "{key}",
+                    class: "flight",
+                    style: "--fy: {layout::sender_cy(&handles, value.from)}%; color: {palette::sender_hex(value.from)};",
+                    "{value.ch}"
+                }
+            }
 
             ReceiverPanel {
-                snapshot: chan.snap.read().clone(),
-                connected: conn.connected(),
-                onreceive: move |_| dispatch(conn, sim, chan, MpscWire::Receive),
+                senders: senders.len(),
+                buffer,
+                occupancy,
+                waiting,
+                last,
+                onreceive: move |_| act_now(sim, |s| s.receive()),
             }
 
-            for view in controls() {
-                SenderControls {
-                    key: "{view.conn}",
-                    conn: view.conn,
-                    blocked: view.blocked,
-                    cy: view.cy,
-                    draft: view.draft,
-                    ondraft: move |ch| set_draft(drafts, view.conn, ch),
-                    onsend: move |_| send_from(conn, sim, chan, drafts, view.conn),
+            for sender in senders.iter().copied() {
+                div {
+                    key: "{sender.handle}",
+                    class: "sender-ctl",
+                    style: "top: {layout::sender_cy(&handles, sender.handle)}%; right: {layout::CONTROLS_RIGHT}%;",
+                    input {
+                        class: "field",
+                        maxlength: 1,
+                        disabled: sender.parked_since.is_some(),
+                        value: draft_of(sender.handle).map(String::from).unwrap_or_default(),
+                        oninput: move |e| set_draft(sender.handle, e.value().chars().next()),
+                    }
+                    button {
+                        class: "btn send",
+                        disabled: sender.parked_since.is_some(),
+                        onclick: move |_| send_from(sender.handle),
+                        "send"
+                    }
+                    button {
+                        class: "btn small",
+                        title: "drop(tx): a parked send is cancelled, and when the last sender goes the channel closes",
+                        onclick: move |_| {
+                            act_now(sim, |s| s.drop_sender(sender.handle));
+                            set_draft(sender.handle, None);
+                        },
+                        "drop"
+                    }
                 }
             }
 
             div { class: "game-footer",
-                if chan.snap.read().waiting_receive {
+                if closed && buffer_empty {
+                    span { class: "note-pill blocked", "every sender dropped — recv() yields None" }
+                } else if closed {
+                    span { class: "note-pill", "every sender dropped — the buffer still drains" }
+                } else if waiting {
                     span { class: "note-pill waiting", "receiver waiting…" }
-                } else if blocked_count() > 0 {
-                    span { class: "note-pill blocked", "{blocked_count} sender(s) blocked" }
+                } else if parked_count > 0 {
+                    span { class: "note-pill blocked", "{parked_count} sender(s) blocked" }
                 } else {
                     span {}
                 }
-                if ctx.may_present() {
-                    button {
-                        class: "btn",
-                        onclick: move |_| {
-                            if conn.is_local() {
-                                let new = next_local_conn();
-                                next_local_conn.set(new + 1);
-                                dispatch_local(sim, chan, MpscWire::CloneSender { conn: new });
-                            } else {
-                                conn.send(&MpscWire::CloneSender { conn: 0 });
-                            }
-                        },
-                        "+ clone sender"
-                    }
-                    button {
-                        class: "btn",
-                        onclick: move |_| restart(conn, ctx, sim, chan),
-                        "restart"
-                    }
+                // cloning needs a live handle to clone; once every sender
+                // is dropped, the channel can never get one back
+                button {
+                    class: "btn",
+                    disabled: closed,
+                    onclick: move |_| {
+                        sim.with_mut(|s| s.clone_sender(s.senders()[0].handle));
+                    },
+                    "+ clone sender"
+                }
+                button {
+                    class: "btn",
+                    onclick: move |_| {
+                        sim.set(fresh_sim());
+                        drafts.set(Vec::new());
+                    },
+                    "restart"
                 }
             }
         }
     }
 }
 
-#[derive(Clone, PartialEq)]
-struct NodeView {
-    sender: SenderInfo,
-    label: String,
-    for_ms: Option<f64>,
-    top: f64,
-    height: f64,
-}
-
 #[component]
-fn SenderNode(node: NodeView, at: f64, clock: Signal<f64>) -> Element {
-    let s = node.sender;
-    let title = if s.owner == s.conn {
-        "connected player"
-    } else {
-        "cloned sender"
-    };
+fn SenderNode(sender: Sender, label: String, geometry: (f64, f64), clock: Signal<f64>) -> Element {
+    let (top, height) = geometry;
+    let handle = sender.handle;
     rsx! {
         div {
-            class: if s.blocked { "actor sender-node blocked" } else { "actor sender-node" },
-            style: "top: {node.top}%; height: {node.height}%; --c: {palette::sender_hex(s.conn)}; --fg: {palette::sender_text_color(s.conn)};",
-            title: title,
-            "{node.label}"
-            if let Some(for_ms) = node.for_ms {
-                Waited { for_ms, at, clock }
-            }
-        }
-    }
-}
-
-#[derive(Clone, PartialEq)]
-struct ControlsView {
-    conn: u64,
-    blocked: bool,
-    cy: f64,
-    draft: String,
-}
-
-#[component]
-fn SenderControls(
-    conn: u64,
-    blocked: bool,
-    cy: f64,
-    draft: String,
-    ondraft: EventHandler<Option<char>>,
-    onsend: EventHandler,
-) -> Element {
-    rsx! {
-        div {
-            class: "sender-ctl",
-            style: "top: {cy}%; right: {layout::CONTROLS_RIGHT}%;",
-            input {
-                class: "field",
-                maxlength: 1,
-                disabled: blocked,
-                value: draft,
-                oninput: move |e| ondraft.call(e.value().chars().next()),
-            }
-            button {
-                class: "btn send",
-                disabled: blocked,
-                onclick: move |_| onsend.call(()),
-                "send"
+            class: if sender.parked_since.is_some() { "actor sender-node blocked" } else { "actor sender-node" },
+            style: "top: {top}%; height: {height}%; --c: {palette::sender_hex(handle)}; --fg: {palette::sender_text_color(handle)};",
+            title: if handle == ORIGINAL { "the sender mpsc::channel returned" } else { "a cloned sender" },
+            "{label}"
+            if let Some(since) = sender.parked_since {
+                Waited { since, clock }
             }
         }
     }
 }
 
 #[component]
-fn ArrowLayer(senders: Vec<SenderInfo>) -> Element {
+fn ArrowLayer(handles: Vec<u64>) -> Element {
     let markers = (0..palette::PALETTE_LEN)
         .map(|idx| {
             let c = colorous::TABLEAU10[idx];
@@ -407,16 +217,16 @@ fn ArrowLayer(senders: Vec<SenderInfo>) -> Element {
                     }
                 }
             }
-            for s in &senders {
+            for handle in handles.iter().copied() {
                 line {
-                    key: "{s.conn}",
+                    key: "{handle}",
                     x1: "{ARROW_X0}%",
-                    y1: "{layout::sender_cy(&senders, s.conn)}%",
+                    y1: "{layout::sender_cy(&handles, handle)}%",
                     x2: "{ARROW_X1}%",
                     y2: "{RECEIVER_CY}%",
-                    stroke: palette::sender_hex(s.conn),
+                    stroke: palette::sender_hex(handle),
                     "stroke-width": 3,
-                    "marker-end": "url(#arrowhead-{palette::color_index(s.conn)})",
+                    "marker-end": "url(#arrowhead-{palette::color_index(handle)})",
                 }
             }
         }
@@ -424,60 +234,50 @@ fn ArrowLayer(senders: Vec<SenderInfo>) -> Element {
 }
 
 #[component]
-fn FlightLayer(flights: Vec<Flight>, senders: Vec<SenderInfo>) -> Element {
-    rsx! {
-        for f in flights {
-            span {
-                key: "{f.key}",
-                class: "flight",
-                style: "--fy: {layout::sender_cy(&senders, f.conn)}%; color: {palette::sender_hex(f.conn)};",
-                "{f.ch}"
-            }
-        }
-    }
-}
-
-#[component]
-fn ReceiverPanel(snapshot: MpscSnapshot, connected: bool, onreceive: EventHandler) -> Element {
-    let count = snapshot.senders.len();
-    let occupancy = snapshot.buffer.len() + snapshot.in_flight;
+fn ReceiverPanel(
+    senders: usize,
+    buffer: Vec<Value>,
+    occupancy: usize,
+    waiting: bool,
+    last: Option<Value>,
+    onreceive: EventHandler,
+) -> Element {
     rsx! {
         div { class: "receiver-group",
             div {
-                class: if snapshot.waiting_receive { "actor receiver waiting" } else { "actor receiver" },
-                title: "{count} connected sender(s)",
-                span { class: "count", "{count}" }
+                class: if waiting { "actor receiver waiting" } else { "actor receiver" },
+                title: "{senders} live sender(s)",
+                span { class: "count", "{senders}" }
                 span { class: "count-caption", "senders" }
             }
             div { class: "buffer",
-                for (i, owned) in snapshot.buffer.iter().enumerate() {
+                for (i, value) in buffer.iter().enumerate() {
                     div {
-                        key: "{owned.conn}-{owned.ch}-{i}",
+                        key: "{value.from}-{value.ch}-{i}",
                         class: "slot filled",
-                        style: "color: {palette::sender_hex(owned.conn)};",
-                        "{owned.ch}"
+                        style: "color: {palette::sender_hex(value.from)};",
+                        "{value.ch}"
                     }
                 }
-                for i in snapshot.buffer.len()..MPSC_CAPACITY {
+                for i in buffer.len()..CAPACITY {
                     div { class: "slot", key: "empty-{i}" }
                 }
             }
             div { class: "recv-row",
                 button {
                     class: "btn rcv",
-                    disabled: !connected,
                     onclick: move |_| onreceive.call(()),
                     "Receive"
                 }
                 span { class: "recv-label",
-                    { match snapshot.last_received {
-                        Some(owned) => rsx! {
-                            span { style: "color: {palette::sender_hex(owned.conn)};", "→ {owned.ch}" }
+                    match last {
+                        Some(value) => rsx! {
+                            span { style: "color: {palette::sender_hex(value.from)};", "→ {value.ch}" }
                         },
                         None => rsx! { "→ –" },
-                    } }
+                    }
                 }
-                span { class: "note-pill occupancy", "buffer {occupancy} / {MPSC_CAPACITY}" }
+                span { class: "note-pill occupancy", "buffer {occupancy} / {CAPACITY}" }
             }
         }
     }

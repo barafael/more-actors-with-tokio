@@ -8,7 +8,7 @@
 //! the collector to collect. Read past the end of the file and watch
 //! shutdown walk down the pipeline without anyone being told to stop.
 //!
-//! Single-player, in the talk as in the export.
+//! Single-player, live as in the export.
 
 mod model;
 
@@ -92,7 +92,7 @@ pub fn PipelineGame() -> Element {
     rsx! {
         div { class: "diagram board-game pipeline-game",
             div { class: "game-header", "pipeline" }
-            div { class: "status", "single-player · click an actor to step it" }
+            div { class: "status", "click an actor to step it" }
 
             div { class: "bd-board",
                 svg { class: "arrow-layer bd-edges", view_box: "0 0 100 100", preserve_aspect_ratio: "none",

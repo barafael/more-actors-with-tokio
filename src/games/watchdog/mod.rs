@@ -1,7 +1,7 @@
 //! The watchdog minigame: the loop-select, given an actor to live in.
 //!
-//! CONCEPT.md §5. Real time, for the presenter to drive live; not shared,
-//! so every screen runs its own. `run()` spawns the actor; `Reset` and
+//! CONCEPT.md §5. Real time, driven live; not shared, so every screen
+//! runs its own. `run()` spawns the actor; `Reset` and
 //! `Stop` fly down its `mpsc` and land in its `select!`; left alone, the
 //! sleep branch wins, `Expired` flies out on the oneshot, and the actor is
 //! gone — sends fail from then on, until you `run()` a fresh one.
@@ -10,10 +10,10 @@ mod model;
 
 use dioxus::prelude::*;
 
+use crate::clock::now_ms;
 use crate::clock::Ticking;
 use crate::games::board::{at_style, edge, use_flights, Flight, FlightLayer, Flights};
 use crate::games::ticker::{subscribe, use_frame_clock, use_local_tick};
-use crate::sim::now_ms;
 // the crate calls its messages `Signal`, which dioxus already means
 use model::{Fired, Phase, Signal as Pet, WatchdogSim, CAPACITY, TIMEOUT_MS};
 
@@ -146,7 +146,6 @@ pub fn WatchdogGame() -> Element {
     rsx! {
         div { class: "diagram board-game watchdog-game",
             div { class: "game-header", "watchdog" }
-            div { class: "status", "live · your own watchdog" }
 
             div { class: "bd-board",
                 svg { class: "arrow-layer bd-edges", view_box: "0 0 100 100", preserve_aspect_ratio: "none",
