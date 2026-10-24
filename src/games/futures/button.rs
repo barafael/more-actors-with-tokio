@@ -35,7 +35,7 @@ pub fn ButtonGame() -> Element {
                         onclick: move |_| {
                             sim.with_mut(|s| s.activate());
                         },
-                        "Create Future"
+                        "Await the future"
                     }
                 }
             }

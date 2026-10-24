@@ -56,8 +56,17 @@ pub fn Deck(initial_slide: usize) -> Element {
 
     // Deck keys, bound on a focusable root rather than the window so the
     // export stays inert. These are simply the navigation you expect from
-    // any deck.
+    // any deck. The games' text fields stop their own keydowns, so typing a
+    // space or moving the cursor in one never turns the slide.
     let on_key = move |event: KeyboardEvent| {
+        // Alt+Arrow is the browser's back/forward, Ctrl/Cmd chords belong to
+        // the browser too: same rule as the export's fallback handler.
+        if event
+            .modifiers()
+            .intersects(Modifiers::ALT | Modifiers::CONTROL | Modifiers::META)
+        {
+            return;
+        }
         let character = |want: &str| event.key() == Key::Character(want.to_string());
 
         match event.key() {
@@ -84,7 +93,7 @@ pub fn Deck(initial_slide: usize) -> Element {
         let mine = generation() + 1;
         generation.set(mine);
         spawn(async move {
-            sleep_ms(2000).await;
+            games::ticker::sleep_ms(2000).await;
             if generation() == mine {
                 awake.set(false);
             }
@@ -119,12 +128,4 @@ pub fn Deck(initial_slide: usize) -> Element {
             slides::Chrome { slide, awake }
         }
     }
-}
-
-/// Sleep without pulling an async runtime into the client.
-async fn sleep_ms(ms: u32) {
-    #[cfg(target_arch = "wasm32")]
-    gloo_timers::future::TimeoutFuture::new(ms).await;
-    #[cfg(not(target_arch = "wasm32"))]
-    let _ = ms;
 }

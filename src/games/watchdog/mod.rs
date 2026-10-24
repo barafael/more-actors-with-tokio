@@ -1,7 +1,6 @@
 //! The watchdog minigame: the loop-select, given an actor to live in.
 //!
-//! CONCEPT.md §5. Real time, driven live; not shared, so every screen
-//! runs its own. `run()` spawns the actor; `Reset` and
+//! CONCEPT.md §5. Real time, driven live. `run()` spawns the actor; `Reset` and
 //! `Stop` fly down its `mpsc` and land in its `select!`; left alone, the
 //! sleep branch wins, `Expired` flies out on the oneshot, and the actor is
 //! gone — sends fail from then on, until you `run()` a fresh one.

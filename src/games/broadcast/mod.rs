@@ -201,6 +201,8 @@ fn SenderNode(
                 maxlength: 1,
                 value: draft,
                 oninput: move |e| ondraft.call(e.value().chars().next()),
+                // typing here is not deck navigation
+                onkeydown: move |e| e.stop_propagation(),
             }
             button {
                 class: "btn send",

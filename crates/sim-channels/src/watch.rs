@@ -252,8 +252,8 @@ impl<T> WatchCore<T> {
         }
     }
 
-    /// Cancel a parked send or replace, handing its value back. Core-driver
-    /// modeling for "the presenter went away while blocked".
+    /// Cancel a parked send or replace, handing its value back: the send
+    /// future dropped while it was parked.
     pub fn cancel_send(&mut self, waiter: WaiterId) -> Option<T> {
         let idx = self.position(waiter)?;
         self.queue.remove(idx).and_then(|pending| pending.value)

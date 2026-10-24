@@ -7,8 +7,6 @@
 //! stage to run one turn of its `select!`, a job to let the network answer,
 //! the collector to collect. Read past the end of the file and watch
 //! shutdown walk down the pipeline without anyone being told to stop.
-//!
-//! Single-player, live as in the export.
 
 mod model;
 

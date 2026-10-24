@@ -20,10 +20,10 @@ Playable minigames for specific concepts, driven from the deck itself.
   - **Built** (`src/games/watchdog/`): the crate's event loop, live and single-player. `run()` spawns it; `send(Reset)`, `send(Stop)` and `drop(reset_tx)` fly into its `select!`, drawn with the select slides' two branches — `reset_rx.recv()` and `sleep, if active` with a draining countdown. Left alone the sleep wins, `Expired` flies out on the oneshot, and the actor is gone: sends fail until a fresh `run()`. A reset still in flight at the deadline arrives too late.
 6. **The actor recipe** (from the blog): actor = plain data; event loop as consuming method returning `Self`; no handle types; natural shutdown by dropping; deterministic unit tests.
    This is the meat chapter. It contains a bunch of code examples. Especially the ones in the end with the deterministic testing. Include buttons here which open vscode at the correct file/line/col/ in the example projects.
-  - **Built**: the recipe slide shows the blog's `UniqueIdService` beside its five rules.
+  - **Built**: the recipe slide lists its five rules (the blog's `UniqueIdService` code is off the slide for now).
   - Unit-test stepper, **built** (`src/games/unit_test/`). The blog's `should_increment_unique_id`, stepped line by line like a debugger: step into `get_unique_id` and `event_loop`, step over, step back. Panes show the test, the call in progress, and the world after each line: the actor's state and where it lives, the mpsc buffer, and each oneshot pair coloured end to end. Two broken variants, one per precondition: `forget drop(tx)` parks `recv()` forever, and `channel(2)` parks the third send before the loop ever runs. The whole run is precomputed as a trace, so the game is just an index into it and every frame is unit-tested.
 7. How do we connect actors? How do they talk? Channel minigames. The viewer is an actor.
-  **Built, in this order**: mpsc, the cycle, oneshot, call-and-response, broadcast, watch.
+  **Built**: mpsc and oneshot close the prerequisites; call-and-response sits in the pattern; the cycle, broadcast and watch in the architecture chapter.
   - `mpsc` (inbox + backpressure + deadlock-cycle footgun), the footgun as its own single-player game: A and B forward to each other over bounded inboxes (`MpscCore`), seize at six messages, drain once the cycle is cut,
   - `oneshot` (transfer single value, an exercise in your understanding of ownership), single-player: every call takes its handle by value, and each result (including `Err(v)` handed back and `RecvError`) is written down,
   - `mpsc` with `oneshot` (call-and-response): requesters call `get_unique_id`, the viewer is the event loop and answers or drops each callback by hand; waiting requesters count up,
@@ -39,7 +39,7 @@ Playable minigames for specific concepts, driven from the deck itself.
 ## The Slide App
 
 - **Dioxus 0.7.10**, rhea style (cream `#fff8e1`, orange `#eb5b20`, Bitter/Fira Mono). Runs in one browser; served as static files.
-- **One machine, all controls**: keyboard nav, per-game restart, reset-all. The deck owns its own slide state and its own games; there is no server and nothing to keep out.
+- **One machine, all controls**: keyboard nav, per-game restart. The deck owns its own slide state and its own games; there is no server and nothing to keep out.
 - **Slides are rsx components**, highlighted with **syntect**.
 - **Code examples derive from example projects** by snipped extraction, and have a button to jump to file:line:column in vscode, using vscode url handler. Snippet extraction happens with a start/end-snippet-marker comment. Similar to https://github.com/barafael/markdown-tools/tree/main/snippet-extractor
 - **"Print" = SSR batch export**: a binary rendering every slide to static HTML via dioxus-ssr, shipped as a static *site* plus the wasm bundle: on load, slides hydrate and games run **in the browser**.

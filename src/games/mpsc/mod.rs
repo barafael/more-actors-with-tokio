@@ -122,6 +122,8 @@ pub fn MpscGame() -> Element {
                         disabled: sender.parked_since.is_some(),
                         value: draft_of(sender.handle).map(String::from).unwrap_or_default(),
                         oninput: move |e| set_draft(sender.handle, e.value().chars().next()),
+                        // typing here is not deck navigation
+                        onkeydown: move |e| e.stop_propagation(),
                     }
                     button {
                         class: "btn send",
@@ -149,7 +151,7 @@ pub fn MpscGame() -> Element {
                 } else if waiting {
                     span { class: "note-pill waiting", "receiver waiting…" }
                 } else if parked_count > 0 {
-                    span { class: "note-pill blocked", "{parked_count} sender(s) blocked" }
+                    span { class: "note-pill blocked", "{parked_count} sender(s) parked" }
                 } else {
                     span {}
                 }

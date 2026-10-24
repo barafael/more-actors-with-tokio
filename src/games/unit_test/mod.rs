@@ -1,11 +1,9 @@
 //! The unit-test stepper: the `UniqueIdService` test from "More Actors with
 //! Tokio", run one line at a time.
 //!
-//! Not a shared game. Every viewer steps their own copy, live as in the
-//! export, because a debugger with forty hands on it is no debugger — and
-//! because the thing on show needs no driver: the test is deterministic,
-//! so its whole run is recorded up front in [`trace`] and stepping is an
-//! index into that record.
+//! The thing on show needs no driver: the test is deterministic, so its
+//! whole run is recorded up front in [`trace`] and stepping is an index
+//! into that record.
 
 mod trace;
 

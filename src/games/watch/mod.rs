@@ -67,6 +67,8 @@ pub fn WatchGame() -> Element {
                     disabled: pending,
                     oninput: move |e| draft.set(e.value()),
                     onkeydown: move |e| {
+                        // typing here is not deck navigation
+                        e.stop_propagation();
                         if e.key() == Key::Enter {
                             send();
                         }

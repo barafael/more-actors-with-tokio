@@ -9,7 +9,9 @@
 
 use dioxus::prelude::*;
 
-use super::model::{Color, LoopSelectSim, Round, SelectSim, SpawnSim, TimerSim, Won};
+use super::model::{
+    Color, LoopSelectSim, Round, SelectSim, SpawnSim, TimerSim, Won, TIMER_PERIOD_S,
+};
 use crate::clock::wall_offset_ms;
 use crate::games::ticker::{act_now, use_clock, use_tick};
 
@@ -42,7 +44,7 @@ fn Race(
     rsx! {
         div { class: "race",
             div { class: branch_class(timer_won),
-                div { class: "branch-head", "sleep_until(next 10s)" }
+                div { class: "branch-head", "sleep_until(next {TIMER_PERIOD_S}s)" }
                 div { class: "branch-body",
                     if armed {
                         span { class: "countdown",
@@ -206,7 +208,7 @@ pub fn SpawnGame() -> Element {
                     },
                     (Some(_), Some(Won::Button { color })) => rsx! {
                         span { class: "note-pill resolved {color.css_name()}",
-                            ".await → Ok({color.display()})"
+                            ".await → Ok(Button({color.display()}))"
                         }
                     },
                     (Some(_), None) => rsx! {

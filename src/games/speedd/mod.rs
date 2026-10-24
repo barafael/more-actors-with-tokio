@@ -7,8 +7,6 @@
 //! Every channel shows how full it is, so backpressure can be watched
 //! propagating — fill a road's queue and the Collector stops, then the
 //! reporting inbox fills, then the cameras park.
-//!
-//! Single-player in the talk as in the export: it is a board to poke at.
 
 mod layout;
 mod model;

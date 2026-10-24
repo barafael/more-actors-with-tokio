@@ -58,10 +58,11 @@ macro_rules! slide {
     };
 }
 
-// schedule.md's four chapters: the hook (2 min), the prerequisites (10 min:
+// schedule.md's chapters: the hook (2 min), the prerequisites (10 min:
 // futures, combining them, spawning, channels), the pattern (12 min, the
-// blog post), and its consequences for architecture (12 min). Then Kay, and
-// a divider for whatever is left over.
+// blog post), its consequences for architecture (12 min), and the closing
+// (4 min: Kay, credit to Alice Ryhl, and a call to report problems with the
+// pattern on the blog repo). Then a divider for whatever is left over.
 deck! {
     // the hook
     ("title", Title),
@@ -76,10 +77,12 @@ deck! {
     ("loop-select", LoopSelectGameSlide),
     // spawning
     ("spawn", SpawnGameSlide),
-    ("watchdog", WatchdogSlide),
     // channels
     ("mpsc", MpscGameSlide),
     ("oneshot", OneshotGameSlide),
+    // all of it together: the loop-select, spawned, with an mpsc inbox and
+    // a oneshot out
+    ("watchdog", WatchdogSlide),
 
     ("the-pattern", section "The Pattern"),
     ("recipe", Recipe),
@@ -109,13 +112,17 @@ deck! {
     ("budget-chat", ChatSlide),
     ("speedd", SpeeddSlide),
 
+    ("closing", section "Closing"),
     ("original-oop", KaySlide),
+    ("thanks", topic "Thanks, Alice Ryhl"),
+    ("report-issues", topic "Found a problem with the pattern? Tell me"),
+
     ("bonus", BonusSlide),
 }
 
 /// A chapter divider.
 #[component]
-fn Section(title: &'static str) -> Element {
+fn Section(title: String) -> Element {
     rsx! {
         div { class: "slide lead",
             h1 { "{title}" }
@@ -125,7 +132,7 @@ fn Section(title: &'static str) -> Element {
 
 /// A topic's heading, before it has content.
 #[component]
-fn Topic(title: &'static str) -> Element {
+fn Topic(title: String) -> Element {
     rsx! {
         div { class: "slide",
             h2 { "{title}" }
@@ -189,7 +196,7 @@ pub fn SpawnGameSlide() -> Element {
     rsx! {
         div { class: "slide",
             h2 { "Spawning the select" }
-            p { class: "dim", "The same race, moved into a task. tokio::spawn runs it on its own and hands back a JoinHandle, which resolves to whatever the select yielded." }
+            p { class: "dim", "One race from the select slide, moved into a task. tokio::spawn runs it on its own and hands back a JoinHandle, which resolves to whatever the select yielded." }
             SpawnGame {}
         }
     }
@@ -213,7 +220,7 @@ pub fn ButtonGameSlide() -> Element {
     rsx! {
         div { class: "slide",
             h2 { "The button future" }
-            p { class: "dim", "This is not an actor — just a future. Activate it, then do real I/O: the future resolves with whichever button is pressed." }
+            p { class: "dim", "This is not an actor — just a future. Await it, then do real I/O: the future resolves with whichever button is pressed." }
             ButtonGame {}
         }
     }
@@ -224,7 +231,7 @@ pub fn MpscGameSlide() -> Element {
     rsx! {
         div { class: "slide",
             h2 { "The mpsc channel" }
-            p { class: "dim", "One bounded buffer, many senders. You are a sender: send on a full channel and you block until a receive frees a slot." }
+            p { class: "dim", "One bounded buffer, many senders. send().await on a full channel parks the sender until a receive frees a slot." }
             MpscGame {}
         }
     }
@@ -258,7 +265,7 @@ pub fn CallGameSlide() -> Element {
     rsx! {
         div { class: "slide",
             h2 { "Call and response" }
-            p { class: "dim", "An mpsc message carrying a oneshot callback. You ask, then wait on your receiver; the actor is the event loop that answers." }
+            p { class: "dim", "An mpsc message carrying a oneshot callback. A task asks, then waits on its receiver; you play the actor's event loop that answers." }
             CallGame {}
         }
     }
@@ -381,7 +388,7 @@ pub fn WatchGameSlide() -> Element {
     rsx! {
         div { class: "slide",
             h2 { "The watch channel" }
-            p { class: "dim", "One value, many receivers. borrow() reveals it; changed() waits for the next different one." }
+            p { class: "dim", "One value, many receivers. borrow() reveals it; changed() waits for the next send." }
             WatchGame {}
         }
     }
@@ -416,8 +423,8 @@ pub fn Recipe() -> Element {
     }
 }
 
-/// The recipe's payoff: the article's unit test, stepped line by line. Each
-/// viewer drives their own copy — it is a debugger, not a crowd game.
+/// The recipe's payoff: the article's unit test, stepped line by line like
+/// a debugger.
 #[component]
 pub fn UnitTestSlide() -> Element {
     rsx! {

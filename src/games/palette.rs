@@ -27,7 +27,8 @@ pub fn sender_text_color(id: u64) -> &'static str {
 }
 
 /// Receivers get their own colour per handle: painting them all alike
-/// makes the fan-out unreadable. Offset so a receiver never matches the sender it listens to.
+/// makes the fan-out unreadable. Offset so a receiver never matches the
+/// sender it listens to.
 pub fn receiver_hex(rx: u64) -> String {
     sender_hex(rx.wrapping_add(3))
 }

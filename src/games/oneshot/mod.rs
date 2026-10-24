@@ -1,8 +1,7 @@
 //! The oneshot minigame: one value, one sender, one receiver, and nothing
 //! you can do twice.
 //!
-//! Single-player, live as in the export: it is an exercise in
-//! ownership, and ownership is personal. Each click is a call that takes a
+//! It is an exercise in ownership. Each click is a call that takes a
 //! handle by value; the handle disappears from your hands and the call's
 //! result is written down, so what `send` and `.await` return — including
 //! both errors — is read off the screen rather than recited.
@@ -58,6 +57,8 @@ pub fn OneshotGame() -> Element {
                                         draft.set(ch);
                                     }
                                 },
+                                // typing here is not deck navigation
+                                onkeydown: move |e| e.stop_propagation(),
                             }
                             button {
                                 class: "btn send",

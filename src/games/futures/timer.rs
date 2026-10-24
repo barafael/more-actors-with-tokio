@@ -47,7 +47,7 @@ pub fn TimerGame() -> Element {
                         span { class: "note-pill pending", "awaiting..." }
                     },
                     (false, Some(waited)) => rsx! {
-                        span { class: "note-pill resolved", "yielded {waited:.0}s waited" }
+                        span { class: "note-pill resolved", "yielded {waited:.0}s" }
                     },
                     (false, None) => rsx! {
                         span { class: "note-pill", "idle — nothing is waiting" }
@@ -92,6 +92,10 @@ pub fn TimerGame() -> Element {
 #[component]
 fn Dial(wall_ms: f64, pending: bool) -> Element {
     let seconds = wall_ms / 1000.0;
+    // Floored, like any clock: rounding would read "60" for the last half
+    // second of a minute, and "10" while the future that resolves at 10 is
+    // still pending.
+    let whole_seconds = seconds.floor() as u64;
     let angle = seconds / 60.0 * std::f64::consts::TAU - std::f64::consts::FRAC_PI_2;
     // the hand starts away from the pivot: the seconds readout lives at the
     // center, and a hand through it would draw over the number
@@ -116,7 +120,7 @@ fn Dial(wall_ms: f64, pending: bool) -> Element {
                 x1: "{x1}", y1: "{y1}", x2: "{x2}", y2: "{y2}",
             }
             text { class: "dial-label", x: "50", y: "56", text_anchor: "middle",
-                "{seconds:.0}"
+                "{whole_seconds}"
             }
         }
     }

@@ -872,7 +872,7 @@ strong {
 
 /* ---- watch game: one fixed sender, a cell holding the value, receivers ---- */
 
-/* the sender node is the presenter's fixed handle */
+/* the sender node is the channel's one fixed handle */
 .tx-node {
     top: 50%;
     transform: translateY(-50%);
@@ -897,7 +897,7 @@ strong {
     }
 }
 
-/* one input + send per presenter, left of the sender node */
+/* the input + send, left of the sender node */
 .tx-ctl {
     position: absolute;
     top: 50%;
@@ -1335,8 +1335,6 @@ strong {
     background: color-mix(in srgb, var(--color-green) 30%, #fff);
 }
 
-/* ---- identity: seat badge and the join code ---- */
-
 /* The deck root is focusable so keys can be bound without a window
    listener, which would also fire in the static export. */
 .deck-root:focus,
@@ -1350,8 +1348,7 @@ strong {
    so the viewer can see the next deadline approaching rather than being
    told about it after the fact. */
 
-.timer-game .timer-dial,
-.select-game .timer-dial {
+.timer-game .timer-dial {
     position: absolute;
     top: 50%;
     left: 50%;

@@ -8,13 +8,13 @@
 //!
 //! The mpsc game's sim already grew this shape by hand for its
 //! flight animation: sync the clock, ask how long until something is due,
-//! then collect whatever came due. This states that shape once so the timer,
-//! select and loop-select sims share it, and so a driver can hold
-//! `&mut dyn Ticking<Event = _>` without caring which game it is.
+//! then collect whatever came due. This states that shape once so every
+//! clock-driven sim (the timer, select, spawn and loop-select, the watchdog,
+//! the cycle, mpsc's flights) shares it, and one driver serves them all.
 //!
 //! The contract deliberately has no `sleep` in it. A sim never waits; it
-//! reports *when* it would next like to be polled and the driver — a
-//! `requestAnimationFrame` loop in the browser — decides how to wait. That is
+//! reports *when* it would next like to be polled and the driver — the
+//! browser frame loop in `games::ticker` — decides how to wait. That is
 //! what keeps the sims testable by stepping a number forward instead of by
 //! sleeping.
 
