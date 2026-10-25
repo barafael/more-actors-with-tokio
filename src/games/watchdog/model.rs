@@ -1,8 +1,9 @@
 //! The watchdog actor from `barafael/watchdog`, running in real time.
 //!
 //! CONCEPT.md §5: the loop-select from the slide before, given somewhere to
-//! run. `Watchdog::with_timeout(d).run()` spawns the actor and hands back
-//! a `mpsc::Sender<Signal>` and a `oneshot::Receiver<Expired>`. Its loop
+//! run. `tokio::spawn(Watchdog::with_timeout(d).event_loop())` starts the
+//! actor, and the owner keeps a `mpsc::Sender<Signal>` and a
+//! `oneshot::Receiver<Expired>`. Its loop
 //! `select!`s over two branches:
 //!
 //! ```text
@@ -37,7 +38,7 @@ pub enum Signal {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Phase {
-    /// `run()` has not been called.
+    /// The event loop has not been spawned.
     Idle,
     Running,
     /// The sleep won: `Expired` was sent and the loop exited.
@@ -87,9 +88,9 @@ impl WatchdogSim {
         }
     }
 
-    /// `Watchdog::with_timeout(TIMEOUT).run()`: a fresh actor, a fresh
-    /// sender and a fresh oneshot. The sleep starts now.
-    pub fn run(&mut self, now: f64) {
+    /// `tokio::spawn(Watchdog::with_timeout(TIMEOUT).event_loop())`: a
+    /// fresh actor, a fresh sender and a fresh oneshot. The sleep starts now.
+    pub fn event_loop(&mut self, now: f64) {
         *self = Self::new();
         self.now = now;
         self.phase = Phase::Running;
@@ -216,7 +217,7 @@ mod tests {
 
     fn running() -> WatchdogSim {
         let mut sim = WatchdogSim::new();
-        sim.run(0.0);
+        sim.event_loop(0.0);
         sim
     }
 
@@ -293,7 +294,7 @@ mod tests {
     fn run_starts_over_with_a_fresh_actor() {
         let mut sim = running();
         sim.tick(TIMEOUT_MS);
-        sim.run(10_000.0);
+        sim.event_loop(10_000.0);
         assert_eq!(sim.phase, Phase::Running);
         assert_eq!(sim.remaining_ms(), Some(TIMEOUT_MS));
         assert!(sim.last.is_none());

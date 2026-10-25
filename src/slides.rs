@@ -21,7 +21,8 @@ use crate::games::watchdog::WatchdogGame;
 /// export all follow.
 ///
 /// A slide is a component, or `section "Title"` for a chapter divider, or
-/// `topic "Title"` for a heading still waiting for its content.
+/// `topic "Title"` for a heading still waiting for its content, or
+/// `code "Title", CONST` for a heading over a short code example.
 macro_rules! deck {
     ($(($name:literal, $($slide:tt)+)),* $(,)?) => {
         /// Every slide's name, in deck order: the export's file names.
@@ -53,6 +54,9 @@ macro_rules! slide {
     (topic $title:literal) => {
         rsx! { Topic { title: $title } }
     };
+    (code $title:literal, $code:ident) => {
+        rsx! { Snippet { title: $title, code: $code } }
+    };
     ($component:ident) => {
         rsx! { $component {} }
     };
@@ -67,6 +71,8 @@ deck! {
     // the hook
     ("title", Title),
     ("mutex", MutexGameSlide),
+    ("ownership", OwnershipSlide),
+    ("scattered-logic", ScatteredLogicSlide),
 
     ("prerequisites", section "Prerequisites"),
     // futures
@@ -75,6 +81,7 @@ deck! {
     // combining futures
     ("select", SelectGameSlide),
     ("loop-select", LoopSelectGameSlide),
+    ("select-pitfalls", SelectPitfallsSlide),
     // spawning
     ("spawn", SpawnGameSlide),
     // channels
@@ -86,11 +93,11 @@ deck! {
 
     ("the-pattern", section "The Pattern"),
     ("recipe", Recipe),
-    ("event-loop", topic "The event loop as consuming method"),
-    ("spawning", topic "Leave the spawning to the user"),
-    ("no-handles", topic "No actor handles"),
+    ("event-loop", code "The event loop as consuming method", EVENT_LOOP_CODE),
+    ("spawning", code "Leave the spawning to the user", SPAWNING_CODE),
+    ("no-handles", code "No actor handles", NO_HANDLES_CODE),
     ("unit-test", UnitTestSlide),
-    ("message-enums", topic "Message enums"),
+    ("message-enums", code "Message enums", MESSAGE_ENUM_CODE),
     ("call-and-response", CallGameSlide),
     // opinions
     ("no-framework", topic "There is no Rust actor framework, and it's called tokio"),
@@ -118,6 +125,7 @@ deck! {
     ("report-issues", topic "Found a problem with the pattern? Tell me"),
 
     ("bonus", BonusSlide),
+    ("transports", TransportsSlide),
 }
 
 /// A chapter divider.
@@ -139,6 +147,63 @@ fn Topic(title: String) -> Element {
         }
     }
 }
+
+/// A topic's heading over a short code example.
+#[component]
+fn Snippet(title: String, code: &'static str) -> Element {
+    rsx! {
+        div { class: "slide",
+            h2 { "{title}" }
+            Code { code }
+        }
+    }
+}
+
+/// A short block of highlighted Rust.
+#[component]
+fn Code(code: &'static str) -> Element {
+    let lines = use_hook(|| crate::highlight::highlight_lines(code, "rust"));
+    rsx! {
+        div { class: "snippet",
+            for (line, html) in lines.iter().enumerate() {
+                div { key: "{line}", class: "snippet-line", dangerous_inner_html: "{html}" }
+            }
+        }
+    }
+}
+
+const EVENT_LOOP_CODE: &str = r#"impl UniqueIdService {
+    pub async fn event_loop(mut self, mut rx: mpsc::Receiver<Message>) -> Self {
+        while let Some(message) = rx.recv().await {
+            self.handle_message(message);
+        }
+        self
+    }
+}"#;
+
+const SPAWNING_CODE: &str = r#"// await it right here
+let service = actor.event_loop(rx).await;
+
+// or spawn it, and keep the handle
+let handle = tokio::spawn(actor.event_loop(rx));
+
+// or poll it alongside others
+actors.push(actor.event_loop(rx)); // FuturesUnordered"#;
+
+const NO_HANDLES_CODE: &str = r#"pub async fn get_unique_id(
+    sender: &mpsc::Sender<Message>,
+) -> Option<oneshot::Receiver<u32>> {
+    let (callback, callback_receiver) = oneshot::channel();
+    sender.send(Message::GetUniqueId { callback }).await.ok()?;
+    Some(callback_receiver)
+}"#;
+
+const MESSAGE_ENUM_CODE: &str = r#"pub enum Message {
+    /// A command: plain data, nobody waits.
+    Skip { count: u32 },
+    /// Call and response: the reply travels on its own channel.
+    GetUniqueId { callback: oneshot::Sender<u32> },
+}"#;
 
 #[component]
 pub fn Title() -> Element {
@@ -163,6 +228,49 @@ pub fn MutexGameSlide() -> Element {
         }
     }
 }
+
+/// "Responsibility is ownership", from the blog: what the lock was
+/// standing in for.
+#[component]
+pub fn OwnershipSlide() -> Element {
+    rsx! {
+        div { class: "slide",
+            h2 { "Ownership is Responsibility" }
+            div { class: "recipe",
+                ul { class: "recipe-rules",
+                    li { strong { "Whoever owns a value is responsible for it." } " Everyone else asks." }
+                    li { strong { "Architecture distributes responsibility." } " So it distributes ownership." }
+                    li { strong { "Channels transfer ownership." } " A message is a value handed over, not lent." }
+                    li { strong { "Borrowing means time-coupling." } " A shared reference ties every holder to every other." }
+                }
+            }
+        }
+    }
+}
+
+/// What the `Arc<Mutex<T>>` answer looks like across a codebase.
+#[component]
+pub fn ScatteredLogicSlide() -> Element {
+    rsx! {
+        div { class: "slide",
+            h2 { "Everyone holds the lock" }
+            p { class: "dim", "Logic that belongs together is spread over every call site. And the state cannot react to anything: it changes only when someone locks it." }
+            Code { code: SCATTERED_CODE }
+        }
+    }
+}
+
+const SCATTERED_CODE: &str = r#"// api.rs
+let mut account = state.lock().await;
+account.balance -= amount;
+
+// interest.rs
+let mut account = state.lock().await;
+account.balance += account.balance / 100;
+
+// alerts.rs: who checks for a negative balance, and when?
+let account = state.lock().await;
+if account.balance < 0 { notify().await; }"#;
 
 /// CONCEPT.md §2: the first future in the deck, and the first thing that
 /// happens without anyone doing it.
@@ -215,6 +323,30 @@ pub fn LoopSelectGameSlide() -> Element {
     }
 }
 
+/// The loop-select's pitfalls, named and left to the post that covers them.
+#[component]
+pub fn SelectPitfallsSlide() -> Element {
+    rsx! {
+        div { class: "slide",
+            h2 { "Loop-select pitfalls" }
+            div { class: "recipe",
+                ul { class: "recipe-rules",
+                    li { strong { "Cancellation safety." } " The losing branch is dropped mid-flight; whatever it already did stays done." }
+                    li { strong { "The panic." } " Every branch disabled and no " code { "else" } ": " code { "select!" } " panics." }
+                    li { strong { "The busy loop." } " Once every channel is closed, " code { "None" } " matches at once, every time, forever." }
+                    li { strong { "The macro." } " rustfmt and rust-analyzer give up inside " code { "select!" } ". Keep it small." }
+                }
+                p { class: "dim pitfalls-link",
+                    "All four, in detail: "
+                    a { href: "https://barafael.github.io/posts/stop-worrying-and-learn-to-loop-select/",
+                        "Stop Worrying and Learn to Loop-Select"
+                    }
+                }
+            }
+        }
+    }
+}
+
 #[component]
 pub fn ButtonGameSlide() -> Element {
     rsx! {
@@ -243,7 +375,7 @@ pub fn CycleGameSlide() -> Element {
     rsx! {
         div { class: "slide",
             h2 { "Two actors, one cycle" }
-            p { class: "dim", "A sends to B, B sends to A, both inboxes bounded. Fill both and each waits for the other to receive. Keep the topology a DAG." }
+            p { class: "dim", "A sends to B, B sends to A, both inboxes bounded. Fill both and each waits for the other to receive. Keep the topology a DAG. And what does this mean for shutdown?" }
             CycleGame {}
         }
     }
@@ -383,6 +515,45 @@ pub fn BonusSlide() -> Element {
     }
 }
 
+/// Generic over `Stream`/`Sink`, the actor never learns which wire a
+/// message came in on: every transport is an adapter into the same inbox.
+#[component]
+pub fn TransportsSlide() -> Element {
+    const TRANSPORTS: [(&str, &str); 4] = [
+        ("TCP", "JSON"),
+        ("TCP", "protobuf"),
+        ("WebSocket", "JSON"),
+        ("WebTransport", "postcard"),
+    ];
+    rsx! {
+        div { class: "slide",
+            h2 { "One actor, any wire" }
+            p { class: "dim", "Inject resources by type: Stream, Sink, AsyncRead. Each transport and codec becomes an adapter, and they all send to the same actor." }
+            div { class: "transports",
+                div { class: "transport-list",
+                    for (wire, codec) in TRANSPORTS {
+                        div { class: "transport",
+                            span { class: "transport-wire", "{wire}" }
+                            span { class: "transport-codec", "{codec}" }
+                        }
+                    }
+                }
+                div { class: "transport-arrows", "→" }
+                div { class: "transport-adapter", code { "impl Stream<Item = Message>" } }
+                div { class: "transport-arrows", "→" }
+                div { class: "transport-actor", code { "mpsc::Sender<Message>" } span { "one actor" } }
+            }
+            Code { code: TRANSPORT_CODE }
+        }
+    }
+}
+
+const TRANSPORT_CODE: &str = r#"async fn forward(mut frames: impl Stream<Item = Message> + Unpin, actor: Sender<Message>) {
+    while let Some(message) = frames.next().await {
+        if actor.send(message).await.is_err() { break; }
+    }
+}"#;
+
 #[component]
 pub fn WatchGameSlide() -> Element {
     rsx! {
@@ -419,9 +590,14 @@ pub fn Recipe() -> Element {
                     li { strong { "Natural shutdown." } " Drop the last sender; " code { "recv()" } " drains, then yields " code { "None" } "." }
                 }
             }
+            Code { code: ACTOR_DATA_CODE }
         }
     }
 }
+
+const ACTOR_DATA_CODE: &str = r#"pub struct UniqueIdService {
+    next_id: u32,
+}"#;
 
 /// The recipe's payoff: the article's unit test, stepped line by line like
 /// a debugger.
@@ -430,7 +606,6 @@ pub fn UnitTestSlide() -> Element {
     rsx! {
         div { class: "slide",
             h2 { "A test with nothing to race" }
-            p { class: "dim", "The article's unit test, one line at a time. Every message is queued before the loop runs, so there is nothing to race." }
             UnitTestGame {}
         }
     }

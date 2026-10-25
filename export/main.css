@@ -1736,6 +1736,88 @@ strong {
     color: var(--color-highlight);
 }
 
+.pitfalls-link {
+    margin-top: 1.4em;
+    font-size: min(1rem, 3.7vh);
+}
+
+.pitfalls-link a {
+    color: var(--color-highlight);
+}
+
+/* ---- short code examples: the recipe's slides and the text slides ---- */
+
+.snippet {
+    align-self: flex-start;
+    max-width: 100%;
+    margin-top: 1.2em;
+    padding: 0.8em 1.2em;
+    overflow: auto;
+    background: #fff;
+    border-left: 4px solid var(--color-highlight);
+    font-family: 'Fira Mono', monospace;
+    font-size: min(0.95rem, 2.5vh, 1.45vw);
+    line-height: 1.35;
+}
+
+.snippet-line {
+    min-height: 1.35em;
+    white-space: pre;
+}
+
+/* ---- bonus: one actor behind many transports ---- */
+
+.transports {
+    display: flex;
+    align-items: center;
+    gap: 1.2em;
+    font-size: min(0.9rem, 2.7vh, 1.5vw);
+}
+
+.transport-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4em;
+}
+
+.transport {
+    display: flex;
+    justify-content: space-between;
+    gap: 1em;
+    padding: 0.3em 0.8em;
+    background: #fff;
+    border: 1px solid var(--color-dimmed);
+    border-radius: 6px;
+}
+
+.transport-codec {
+    color: var(--color-dimmed);
+}
+
+.transport-arrows {
+    font-size: 1.6em;
+    color: var(--color-dimmed);
+}
+
+.transport-adapter,
+.transport-actor {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.3em;
+    padding: 0.6em 1em;
+    background: #fff;
+    border: 2px solid var(--color-highlight);
+    border-radius: 6px;
+}
+
+.transport-adapter code,
+.transport-actor code {
+    white-space: nowrap;
+    font-family: 'Fira Mono', monospace;
+    font-size: 0.9em;
+}
+
 
 /* ---- unit-test stepper: a debugger over the article's test ----
    Laid out in flow rather than absolutely: three panes (the test, the call

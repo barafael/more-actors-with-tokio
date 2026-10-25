@@ -1,10 +1,12 @@
 Hook: 2 minutes
 Title
 Arc<Mutex> (mutex game)
+Ownership is Responsibility
+Everyone holds the lock: logic spread over every call site, no reacting to events
 
 Prerequisites: 10 minutes
 Futures: timer, button future
-Combining Futures: select, loop / select
+Combining Futures: select, loop / select, loop-select pitfalls (links the loop-select post)
 Spawning: tokio::spawn and its JoinHandle
 Channels: mpsc, oneshot
 All of it together: watchdog
@@ -35,3 +37,4 @@ shoutout to Alice Ryhl (original Blogpost on the matter)
 call-to-action to report issues with the pattern against my blog repo.
 
 Bonus Material
+One actor, any wire: Stream/Sink/AsyncRead adapters (TCP/JSON, TCP/protobuf, WebSocket/JSON, WebTransport/postcard)

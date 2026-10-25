@@ -1,9 +1,9 @@
 //! The watchdog minigame: the loop-select, given an actor to live in.
 //!
-//! CONCEPT.md §5. Real time, driven live. `run()` spawns the actor; `Reset` and
-//! `Stop` fly down its `mpsc` and land in its `select!`; left alone, the
-//! sleep branch wins, `Expired` flies out on the oneshot, and the actor is
-//! gone — sends fail from then on, until you `run()` a fresh one.
+//! CONCEPT.md §5. Real time, driven live. You spawn its `event_loop()`;
+//! `Reset` and `Stop` fly down its `mpsc` and land in its `select!`; left
+//! alone, the sleep branch wins, `Expired` flies out on the oneshot, and the
+//! actor is gone — sends fail from then on, until you spawn a fresh one.
 
 mod model;
 
@@ -25,7 +25,8 @@ const CHANNEL: (f64, f64) = (22.0, 36.0);
 /// How long a fired branch stays lit.
 const FLASH_MS: f64 = 900.0;
 
-const START: &str = "Watchdog::with_timeout(5s).run() spawns the actor. Then keep it fed.";
+const START: &str =
+    "tokio::spawn(Watchdog::with_timeout(5s).event_loop()): you spawn it. Then keep it fed.";
 
 fn signal_flight(signal: Pet) -> Flight {
     Flight {
@@ -60,8 +61,8 @@ struct Dog {
 }
 
 impl Dog {
-    fn run(mut self) {
-        self.sim.with_mut(|s| s.run(now_ms()));
+    fn event_loop(mut self) {
+        self.sim.with_mut(|s| s.event_loop(now_ms()));
         self.flights.clear();
         self.note.set(format!(
             "A fresh watchdog: its sleep started now, and it expires in {}s unless reset.",
@@ -81,7 +82,7 @@ impl Dog {
             ));
         } else {
             self.note.set(
-                "The send fails: the watchdog has exited and its receiver is gone. Call run() for a new one."
+                "The send fails: the watchdog has exited and its receiver is gone. Spawn a fresh event_loop()."
                     .to_string(),
             );
         }
@@ -155,7 +156,7 @@ pub fn WatchdogGame() -> Element {
                 div { class: "bd-actor wd-owner", style: at_style(OWNER),
                     div { class: "bd-head", "you: the owner" }
                     if !running {
-                        button { class: "btn await", onclick: move |_| dog.run(), "run()" }
+                        button { class: "btn await", onclick: move |_| dog.event_loop(), "spawn(event_loop())" }
                     }
                     if running {
                         button { class: "btn rcv", disabled: sim.sender_dropped(), onclick: move |_| dog.send(Pet::Reset), "send(Reset)" }
