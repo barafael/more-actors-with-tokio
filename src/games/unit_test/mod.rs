@@ -7,6 +7,9 @@
 
 mod trace;
 
+/// The stepper's callees, for the slides that show them still.
+pub use trace::{EVENT_LOOP, GET_UNIQUE_ID};
+
 use std::rc::Rc;
 
 use dioxus::prelude::*;

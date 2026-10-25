@@ -6,19 +6,20 @@ Everyone holds the lock: logic spread over every call site, no reacting to event
 
 Prerequisites: 10 minutes
 Futures: timer, button future
-Combining Futures: select, loop / select, loop-select pitfalls (links the loop-select post)
+Combining Futures: select, loop / select
 Spawning: tokio::spawn and its JoinHandle
 Channels: mpsc, oneshot
 All of it together: watchdog
+Loop-select pitfalls (links the loop-select post)
 
 The Pattern: 12 minutes
 essentially this: https://barafael.github.io/posts/more-actors-with-tokio/
 Recipe
+Message enums
 The event loop as consuming method
 Leave the spawning to the user
 No actor handles
 Unit testing an actor (stepper)
-Message enums
 Call and response (mpsc + oneshot)
 There is no Rust actor framework, and it's called tokio
 Don't make a Heartbeat actor

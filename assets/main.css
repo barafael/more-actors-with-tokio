@@ -211,10 +211,10 @@ strong {
     /* Sizes for text inside a game. Custom properties are substituted where
        they are used, so the cqh resolves against this diagram, the size
        container, rather than against anything above it. */
-    --t-label: clamp(10px, 2.2cqh, 14px);
-    --t-body: clamp(11px, 2.4cqh, 15px);
-    --t-state: clamp(13px, 3.2cqh, 21px);
-    --t-big: clamp(18px, 5cqh, 32px);
+    --t-label: clamp(11px, 2.9cqh, 18px);
+    --t-body: clamp(12px, 3.1cqh, 19px);
+    --t-state: clamp(14px, 3.9cqh, 25px);
+    --t-big: clamp(20px, 5.6cqh, 36px);
     /* How much a centred stage grows within its game, once there is room
        for it (see --fill below). zoom rather than transform, so the grown
        stage takes up the room it draws in and pushes, wraps or clips like
@@ -260,13 +260,13 @@ strong {
 
     /* How much further each game can grow before its pieces meet, found
        by measuring each at 900p and 1080p. The sparse ones get the most;
-       the dense ones (and those that already fill their box) get none. */
+       the dense ones (and those that already fill their box) get none;
+       the call game lost its 1.1 when the text tokens grew. */
     .timer-game,
     .loop-select-game,
     .select-game,
     .spawn-game,
-    .watchdog-game,
-    .call-game {
+    .watchdog-game {
         --dens: 1.1;
     }
 
@@ -478,7 +478,7 @@ strong {
 
 .btn {
     padding: 7px 13px;
-    font: 700 12px var(--font-label);
+    font: 700 14px var(--font-label);
     text-transform: uppercase;
     letter-spacing: 0.07em;
     border: 2px solid var(--ink);
@@ -534,7 +534,7 @@ strong {
     border: 2px dashed #999;
     border-radius: 0;
     background: rgba(255, 248, 225, 0.9);
-    font: bold 14px sans-serif;
+    font: bold 16px sans-serif;
     color: var(--color-dimmed);
     white-space: nowrap;
 }

@@ -10,7 +10,7 @@ use crate::games::mutex::MutexGame;
 use crate::games::oneshot::OneshotGame;
 use crate::games::pipeline::PipelineGame;
 use crate::games::speedd::SpeeddGame;
-use crate::games::unit_test::UnitTestGame;
+use crate::games::unit_test::{UnitTestGame, EVENT_LOOP, GET_UNIQUE_ID};
 use crate::games::unordered::UnorderedGame;
 use crate::games::watch::WatchGame;
 use crate::games::watchdog::WatchdogGame;
@@ -81,7 +81,6 @@ deck! {
     // combining futures
     ("select", SelectGameSlide),
     ("loop-select", LoopSelectGameSlide),
-    ("select-pitfalls", SelectPitfallsSlide),
     // spawning
     ("spawn", SpawnGameSlide),
     // channels
@@ -90,14 +89,16 @@ deck! {
     // all of it together: the loop-select, spawned, with an mpsc inbox and
     // a oneshot out
     ("watchdog", WatchdogSlide),
+    // its pitfalls, now that a select over a channel has been seen
+    ("select-pitfalls", SelectPitfallsSlide),
 
     ("the-pattern", section "The Pattern"),
     ("recipe", Recipe),
-    ("event-loop", code "The event loop as consuming method", EVENT_LOOP_CODE),
-    ("spawning", code "Leave the spawning to the user", SPAWNING_CODE),
-    ("no-handles", code "No actor handles", NO_HANDLES_CODE),
-    ("unit-test", UnitTestSlide),
     ("message-enums", code "Message enums", MESSAGE_ENUM_CODE),
+    ("event-loop", code "The event loop as consuming method", EVENT_LOOP),
+    ("spawning", code "Leave the spawning to the user", SPAWNING_CODE),
+    ("no-handles", code "No actor handles", GET_UNIQUE_ID),
+    ("unit-test", UnitTestSlide),
     ("call-and-response", CallGameSlide),
     // opinions
     ("no-framework", topic "There is no Rust actor framework, and it's called tokio"),
@@ -172,15 +173,6 @@ fn Code(code: &'static str) -> Element {
     }
 }
 
-const EVENT_LOOP_CODE: &str = r#"impl UniqueIdService {
-    pub async fn event_loop(mut self, mut rx: mpsc::Receiver<Message>) -> Self {
-        while let Some(message) = rx.recv().await {
-            self.handle_message(message);
-        }
-        self
-    }
-}"#;
-
 const SPAWNING_CODE: &str = r#"// await it right here
 let service = actor.event_loop(rx).await;
 
@@ -190,19 +182,16 @@ let handle = tokio::spawn(actor.event_loop(rx));
 // or poll it alongside others
 actors.push(actor.event_loop(rx)); // FuturesUnordered"#;
 
-const NO_HANDLES_CODE: &str = r#"pub async fn get_unique_id(
-    sender: &mpsc::Sender<Message>,
-) -> Option<oneshot::Receiver<u32>> {
-    let (callback, callback_receiver) = oneshot::channel();
-    sender.send(Message::GetUniqueId { callback }).await.ok()?;
-    Some(callback_receiver)
-}"#;
-
-const MESSAGE_ENUM_CODE: &str = r#"pub enum Message {
-    /// A command: plain data, nobody waits.
-    Skip { count: u32 },
-    /// Call and response: the reply travels on its own channel.
+/// The stepper's `Message`, and the shape most actors take instead.
+const MESSAGE_ENUM_CODE: &str = r#"/// UniqueIdService's one message: call and response.
+pub enum Message {
     GetUniqueId { callback: oneshot::Sender<u32> },
+}
+
+/// Most actors take commands: plain data, nobody waits.
+pub enum Command {
+    Increment { by: u32 },
+    Reset,
 }"#;
 
 #[component]
@@ -279,7 +268,7 @@ pub fn TimerGameSlide() -> Element {
     rsx! {
         div { class: "slide",
             h2 { "A future that waits" }
-            p { class: "dim", "Yields the number of seconds until a multiple of ten was reached." }
+            p { class: "dim", "Yields the number of seconds it waited for the next multiple of ten." }
             TimerGame {}
         }
     }
