@@ -592,11 +592,11 @@ strong {
 .receiver-group {
     position: absolute;
     right: 16%;
-    top: 24%;
+    top: 18%;
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 10px;
+    gap: 16px;
     z-index: 5;
 }
 
@@ -1771,6 +1771,7 @@ strong {
     display: flex;
     align-items: center;
     gap: 1.2em;
+    margin-top: 1em;
     font-size: min(0.9rem, 2.7vh, 1.5vw);
 }
 
@@ -1828,13 +1829,13 @@ strong {
 .unit-test-game {
     display: grid;
     grid-template-rows: minmax(0, 1fr) auto auto;
-    gap: 8px;
+    gap: 14px;
     padding: 46px 14px 10px;
 }
 
 .ut-panes {
     display: grid;
-    grid-template-columns: minmax(0, 1.4fr) minmax(0, 1.1fr) minmax(0, 0.8fr);
+    grid-template-columns: minmax(0, 1.3fr) minmax(0, 1.2fr) minmax(0, 0.8fr);
     gap: 10px;
     min-height: 0;
 }
@@ -2344,11 +2345,11 @@ strong {
 @container (max-height: 400px) {
     .mutex-game,
     .mx-stage {
-        gap: 6px;
+        gap: 12px;
     }
 
     .mx-lock {
-        padding: 4px 14px;
+        padding: 8px 14px;
         gap: 2px;
     }
 }
@@ -2447,7 +2448,8 @@ strong {
     display: flex;
     flex-wrap: wrap;
     justify-content: center;
-    gap: 6px;
+    gap: 10px;
+    margin-top: 10px;
 }
 
 .cr-outcome {
@@ -2463,7 +2465,7 @@ strong {
     min-height: 0;
     /* headroom for the create button in the corner, which the zoomed
        sender box would otherwise reach */
-    padding-top: 36px;
+    padding-top: 64px;
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
     align-items: center;
@@ -2770,7 +2772,7 @@ strong {
 .board-game {
     display: flex;
     flex-direction: column;
-    padding: 44px 10px 48px;
+    padding: 44px 10px 64px;
 }
 
 .bd-board {
@@ -2961,6 +2963,10 @@ button.bd-actor:hover {
 }
 
 .bd-channel.bd-uncreated {
+    background: #faf5e8;
+}
+
+.bd-channel.bd-uncreated > * {
     opacity: 0.6;
 }
 
@@ -3280,7 +3286,10 @@ button.bd-actor:hover {
 /* ---- watchdog: the loop-select with an inbox and a way out ---- */
 
 .wd-owner {
-    width: 17%;
+    /* at least its share of the board, and never narrower than its
+       spawn(event_loop()) button */
+    width: max-content;
+    min-width: 17%;
     gap: 8px;
     padding: 10px 12px;
 }
@@ -3403,6 +3412,12 @@ button.bd-actor:hover {
 
 .pl-dropped .bd-slots {
     min-height: 1.9em;
+}
+
+/* the channel boxes sit in the gaps between stages; full-size titles
+   made them wider than the gap */
+.pipeline-game .bd-channel-title {
+    font-size: 0.85em;
 }
 
 /* ---- FuturesUnordered: many futures, one task ---- */

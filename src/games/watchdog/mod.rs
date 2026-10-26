@@ -20,7 +20,7 @@ const OWNER: (f64, f64) = (11.0, 50.0);
 const ACTOR: (f64, f64) = (50.0, 50.0);
 const EXPIRY: (f64, f64) = (88.0, 50.0);
 /// Where the channel's label sits on the edge.
-const CHANNEL: (f64, f64) = (22.0, 36.0);
+const CHANNEL: (f64, f64) = (22.0, 19.0);
 
 /// How long a fired branch stays lit.
 const FLASH_MS: f64 = 900.0;

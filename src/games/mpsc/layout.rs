@@ -7,7 +7,7 @@ pub const SENDER_LIST_SPAN: f64 = 82.0;
 pub const ARROW_X0: f64 = 31.5;
 /// Arrow end, hidden under the receiver box so the exact box edge never
 /// matters.
-pub const ARROW_X1: f64 = 78.0;
+pub const ARROW_X1: f64 = 72.0;
 /// Vertical center of the receiver box, where arrows and flights converge.
 pub const RECEIVER_CY: f64 = 36.0;
 /// Right edge of the per-sender controls, just left of the nodes.
