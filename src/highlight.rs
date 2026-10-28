@@ -15,10 +15,8 @@ fn syntax_set() -> &'static SyntaxSet {
 
 fn theme() -> &'static Theme {
     THEME.get_or_init(|| {
-        ThemeSet::load_defaults()
-            .themes
-            .remove("InspiredGitHub")
-            .expect("bundled InspiredGitHub theme")
+        let mut source = std::io::Cursor::new(include_str!("rhea.tmTheme"));
+        ThemeSet::load_from_reader(&mut source).expect("bundled rhea theme")
     })
 }
 
