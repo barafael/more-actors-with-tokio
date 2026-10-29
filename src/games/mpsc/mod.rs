@@ -70,7 +70,10 @@ pub fn MpscGame() -> Element {
     };
 
     rsx! {
-        div { class: "diagram mpsc-game",
+        div {
+            class: "diagram mpsc-game",
+            // where the receiver box sits, shared with the arrows' ends
+            style: "--rx: {ARROW_X1}%; --ry: {RECEIVER_CY}%;",
             div { class: "game-header", "mpsc" }
 
             ArrowLayer { handles: handles.clone() }
@@ -212,7 +215,8 @@ fn ArrowLayer(handles: Vec<u64>) -> Element {
                         id: "arrowhead-{idx}",
                         "markerWidth": 4,
                         "markerHeight": 4,
-                        "refX": 2.6,
+                        // the tip, so the head ends on the receiver's edge
+                        "refX": 4,
                         "refY": 2,
                         orient: "auto",
                         path { d: "M0,0 L4,2 L0,4 Z", fill: fill }

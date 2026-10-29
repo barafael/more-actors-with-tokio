@@ -2,8 +2,8 @@
 //!
 //! A ticking sim reports when it next wants polling; in the browser there is
 //! no runtime to sleep in, so the job is done by a frame loop. It keeps
-//! running even while no sim wants polling, because the seconds dial has to
-//! keep sweeping.
+//! running even while no sim wants polling, so a game can redraw from it
+//! whenever it likes.
 //!
 //! That split is deliberate. The *authority* over when a future resolves is
 //! the sim; this only animates the gap. A frame loop that stalls
@@ -17,9 +17,10 @@ use crate::clock::Ticking;
 
 /// How often the dial is redrawn, in milliseconds.
 ///
-/// Not a frame rate: the hand sweeps a 60-second dial, so ~10fps is already
-/// smoother than the eye can follow, and it should not burn a core.
-const FRAME_MS: u32 = 100;
+/// Not a frame rate: the hand sweeps a ten-second dial, so 20fps moves it
+/// under two degrees a frame, smoother than the eye follows from a seat,
+/// without burning a core.
+const FRAME_MS: u32 = 50;
 
 /// A signal carrying monotonic milliseconds, updated continuously.
 ///

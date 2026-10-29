@@ -6,6 +6,7 @@ mod button;
 pub mod model;
 mod select;
 mod timer;
+mod wait;
 
 pub use button::ButtonGame;
 pub use select::{LoopSelectGame, SelectGame, SpawnGame};

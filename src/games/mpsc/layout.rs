@@ -5,10 +5,12 @@ pub const SENDER_LIST_TOP: f64 = 6.0;
 pub const SENDER_LIST_SPAN: f64 = 82.0;
 /// Right edge of the sender nodes, in % of diagram width.
 pub const ARROW_X0: f64 = 31.5;
-/// Arrow end, hidden under the receiver box so the exact box edge never
-/// matters.
-pub const ARROW_X1: f64 = 72.0;
+/// Left edge of the receiver box, where the arrows end. The stylesheet
+/// pins the box there (through `--rx`), so the arrowheads touch it at any
+/// diagram size rather than missing it for the buffer below.
+pub const ARROW_X1: f64 = 60.0;
 /// Vertical center of the receiver box, where arrows and flights converge.
+/// Pinned in the stylesheet through `--ry`, like [`ARROW_X1`].
 pub const RECEIVER_CY: f64 = 36.0;
 /// Right edge of the per-sender controls, just left of the nodes.
 pub const CONTROLS_RIGHT: f64 = 82.5;

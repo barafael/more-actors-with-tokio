@@ -1,13 +1,12 @@
 Hook: 2 minutes
 Title
+Prelude: communication implies trust; trust requires responsibility; responsibility means ownership
 Arc<Mutex> (mutex game)
-Ownership is Responsibility
-Everyone holds the lock: logic spread over every call site, no reacting to events
 
 Prerequisites: 10 minutes
 Futures: timer, button future
 Combining Futures: select, loop / select
-Spawning: tokio::spawn and its JoinHandle
+Spawning: tokio::spawn the loop-select; its JoinHandle never resolves
 Channels: mpsc, oneshot
 All of it together: watchdog
 Loop-select pitfalls (links the loop-select post)
@@ -34,6 +33,7 @@ In practice: budget chat, speedd
 
 Closing: 4 minutes
 Mention oOOP (Alan Kay connection)
+Ownership is Responsibility
 shoutout to Alice Ryhl (original Blogpost on the matter)
 call-to-action to report issues with the pattern against my blog repo.
 

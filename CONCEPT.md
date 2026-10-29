@@ -6,13 +6,13 @@ Playable minigames for specific concepts, driven from the deck itself.
 ## Talk structure
 
 1. **Hook — shared synchronized state**: `Arc<Mutex<T>>` buys safety but not backpressure, lifecycle, panic isolation, or deterministic tests. A mutex is an unstructured actor.
-  - **Built** (`games/mutex/`): a fair `Arc<Mutex<u64>>` and three tasks each holding a clone; waiters count up the seconds they have been parked.
+  - **Built** (`games/mutex/`): a fair `Arc<Mutex<Rgb>>` and three tasks each holding a clone; only the holder may pick the colour, from a hexagon of six in the lock (a number would invite "just use an atomic"); waiters count up the seconds they have been parked.
   - Mutex is the first minigame. Somebody will lock it. On unlock, somebody waiting on the lock is selected and gets it. Nobody else can do anything because they get blocked on acquire. So this is not ideal.
 2. Let's start with futures though. **Built.**
-  - Timer minigame. Not interactive. When activated, the future blocks until the next time the seconds are a multiple of 10. Then it yields the number of seconds waited. For comfort, a seconds-of-the-minute timer is displayed.
+  - Timer minigame. Pick a duration from 0 to 10 seconds with the `sleep( − n s + )` steppers, then await it: the future resolves after that long and yields the seconds. A ten-second dial marks the chosen sleep on its rim and fills it in as it passes. The select, loop-select and spawn slides use the same timer, with the same steppers on their timer branch.
   - Button minigame. This is real I/O. When activated, the future blocks until either of three colored buttons is pressed, then it yields the button which was clicked. This is a composite future already - it waits for 3 things.
 3. Select minigame. Both Futures from before next to each other. Whichever wins, gets displayed at the bottom (seconds or button). **Built.**
-4. Loop-select minigame. Both Futures from before next to each other. Whichever wins, gets displayed at the bottom (seconds or button). Then the loop repeats. **Built**, with a tape of the last few rounds.
+4. Loop-select minigame. Both Futures from before next to each other. Whichever wins, gets displayed at the bottom (seconds or button). Then the loop repeats. **Built**, with a tape of the last few rounds. The loop always runs (no `break`, no clearing the tape), and each time it comes back around the race flashes grey. The spawn slide then hands this same loop to `tokio::spawn`: spawned once, it never stops, its `JoinHandle<()>` never resolves, and a button shows the whole program as valid Rust with each select arm deferred to an async function.
 
   These three share the **tick contract** (`src/clock.rs`): `sync_now` / `next_delay_ms` / `poll_due`, so a sim reports *when* it next wants polling and the component decides how to wait — a frame loop in the browser (`src/games/ticker.rs`). The sims never sleep, so they are tested by stepping a number forward. `SelectSim` composes the real `TimerSim` and `ButtonSim` rather than re-modelling them, which is what makes "the losing branch is dropped" one line rather than a special case.
 

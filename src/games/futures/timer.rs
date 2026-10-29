@@ -1,53 +1,52 @@
 //! The timer minigame: a future that resolves because time passed.
 //!
-//! CONCEPT.md §2, the first beat of the deck. Not interactive beyond
-//! awaiting it — the point is that nothing makes this happen but time.
-//! The dial exists so the wait is legible: you can see the deadline coming
-//! and, more importantly, see that awaiting at 0:07 is a three-second wait
-//! while awaiting at 0:11 is a nine-second one.
+//! CONCEPT.md §2, the first beat of the deck. Pick how long to sleep, from
+//! nothing to ten seconds, and await it: nothing makes it resolve but time.
+//! The dial is one turn of ten seconds, with the chosen sleep marked on its
+//! rim, so the deadline is visible before it arrives.
 
 use dioxus::prelude::*;
 
-use super::model::{TimerSim, TIMER_PERIOD_S};
-use crate::clock::{wall_now_ms, wall_offset_ms};
-use crate::games::ticker::{act_now, subscribe, use_frame_clock, use_tick};
+use super::model::{TimerSim, MAX_WAIT_S};
+use super::wait::SleepCall;
+use crate::games::ticker::{act_now, use_clock, use_tick};
 
 /// Radius of the dial, in the svg's own units.
 const DIAL_R: f64 = 46.0;
 
+/// Radius of the ring that marks the sleep, just inside the rim.
+const SPAN_R: f64 = 40.0;
+
 #[component]
 pub fn TimerGame() -> Element {
-    let mut sim = use_signal(|| TimerSim::new(wall_offset_ms()));
-    let (clock, live) = use_frame_clock();
+    let mut sim = use_signal(TimerSim::new);
+    let clock = use_clock();
     use_tick(sim, clock);
 
     let timer = *sim.read();
-    // The dial sweeps whether or not a future is pending, so this component
-    // redraws each frame; the instant itself is the sim clock, which is not
-    // what the dial shows, so it is deliberately only a subscription.
-    subscribe(clock);
-    // The hand comes off the wall clock so it sweeps continuously.
-    //
-    // Until the frame loop is running, though, the hand parks at the top of
-    // the dial: an SSR first paint has to be reproducible (the export
-    // asserts two renders match) and has to match what the client draws
-    // when it hydrates. `live` is false in both of those renders and true
-    // from the first browser frame onward.
-    let wall_ms = if live() { wall_now_ms() } else { 0.0 };
+    let pending = timer.pending();
+    // a pending sleep shows its own length; otherwise the one about to be
+    // asked for
+    let span_s = timer.sleeping_s().unwrap_or(timer.wait_s());
 
     rsx! {
         div { class: "diagram timer-game",
             div { class: "game-header", "timer" }
 
-            Dial { wall_ms, pending: timer.pending() }
+            Dial {
+                span_s,
+                elapsed_ms: timer.elapsed_ms().unwrap_or(0.0),
+                remaining_ms: timer.remaining_ms(),
+                pending,
+            }
 
             div { class: "timer-readout",
-                match (timer.pending(), timer.waited_s()) {
+                match (pending, timer.waited_s()) {
                     (true, _) => rsx! {
                         span { class: "note-pill pending", "awaiting..." }
                     },
                     (false, Some(waited)) => rsx! {
-                        span { class: "note-pill resolved", "yielded {waited:.0}s" }
+                        span { class: "note-pill resolved", "yielded {waited}s" }
                     },
                     (false, None) => rsx! {
                         span { class: "note-pill", "idle — nothing is waiting" }
@@ -56,13 +55,20 @@ pub fn TimerGame() -> Element {
             }
 
             div { class: "create-row",
-                if !timer.pending() {
+                SleepCall {
+                    wait_s: timer.wait_s(),
+                    locked: pending,
+                    on_change: move |wait_s| {
+                        sim.with_mut(|s| s.set_wait_s(wait_s));
+                    },
+                }
+                if !pending {
                     button {
                         class: "btn await",
                         onclick: move |_| {
                             act_now(sim, |s| s.activate());
                         },
-                        "Await the timer"
+                        ".await"
                     }
                 } else {
                     button {
@@ -76,10 +82,10 @@ pub fn TimerGame() -> Element {
             }
 
             div { class: "game-footer",
-                span { class: "dim", "resolves whenever the seconds hit a multiple of {TIMER_PERIOD_S}" }
+                span { class: "dim", "resolves once its seconds have passed, and yields them" }
                 button {
                     class: "btn",
-                    onclick: move |_| sim.set(TimerSim::new(wall_offset_ms())),
+                    onclick: move |_| sim.set(TimerSim::new()),
                     "restart"
                 }
             }
@@ -87,22 +93,30 @@ pub fn TimerGame() -> Element {
     }
 }
 
-/// The seconds dial: a full minute around, with the period boundaries marked
-/// so the next deadline is visible before it arrives.
+/// The ten-second dial: the sleep marked on the rim, filled in as it
+/// passes, and a hand at how far it has got.
 #[component]
-fn Dial(wall_ms: f64, pending: bool) -> Element {
-    let seconds = wall_ms / 1000.0;
-    // Floored, like any clock: rounding would read "60" for the last half
-    // second of a minute, and "10" while the future that resolves at 10 is
-    // still pending.
-    let whole_seconds = seconds.floor() as u64;
-    let angle = seconds / 60.0 * std::f64::consts::TAU - std::f64::consts::FRAC_PI_2;
-    // the hand starts away from the pivot: the seconds readout lives at the
-    // center, and a hand through it would draw over the number
+fn Dial(span_s: u64, elapsed_ms: f64, remaining_ms: Option<f64>, pending: bool) -> Element {
+    let turn_ms = MAX_WAIT_S as f64 * 1000.0;
+    let angle = elapsed_ms / turn_ms * std::f64::consts::TAU - std::f64::consts::FRAC_PI_2;
+    // the hand starts away from the pivot: the readout lives at the centre,
+    // and a hand through it would draw over the number
     const HAND_INNER: f64 = 15.0;
     let (sin, cos) = angle.sin_cos();
     let (x1, y1) = (50.0 + HAND_INNER * cos, 50.0 + HAND_INNER * sin);
     let (x2, y2) = (50.0 + DIAL_R * 0.82 * cos, 50.0 + DIAL_R * 0.82 * sin);
+
+    // Arcs as dashes on a circle turned to start at the top: the dash is
+    // the share of one ten-second turn.
+    let circumference = std::f64::consts::TAU * SPAN_R;
+    let span = span_s as f64 / MAX_WAIT_S as f64 * circumference;
+    let done = (elapsed_ms / turn_ms).min(1.0) * circumference;
+    // counting down while pending, rounded up so it never reads 0 early;
+    // otherwise the length of the sleep
+    let label = match remaining_ms {
+        Some(left) => (left / 1000.0).ceil() as u64,
+        None => span_s,
+    };
 
     rsx! {
         svg { class: "timer-dial", view_box: "0 0 100 100",
@@ -110,8 +124,21 @@ fn Dial(wall_ms: f64, pending: bool) -> Element {
                 class: if pending { "dial-face pending" } else { "dial-face" },
                 cx: "50", cy: "50", r: "{DIAL_R}",
             }
-            // one tick per period boundary: these are the instants the
-            // future can resolve at
+            circle {
+                class: "dial-span",
+                cx: "50", cy: "50", r: "{SPAN_R}",
+                stroke_dasharray: "{span} {circumference}",
+                transform: "rotate(-90 50 50)",
+            }
+            if pending {
+                circle {
+                    class: "dial-done",
+                    cx: "50", cy: "50", r: "{SPAN_R}",
+                    stroke_dasharray: "{done} {circumference}",
+                    transform: "rotate(-90 50 50)",
+                }
+            }
+            // one tick per second of the turn
             for (x1, y1, x2, y2) in dial_ticks() {
                 line { class: "dial-tick", x1: "{x1}", y1: "{y1}", x2: "{x2}", y2: "{y2}" }
             }
@@ -120,54 +147,30 @@ fn Dial(wall_ms: f64, pending: bool) -> Element {
                 x1: "{x1}", y1: "{y1}", x2: "{x2}", y2: "{y2}",
             }
             text { class: "dial-label", x: "50", y: "56", text_anchor: "middle",
-                "{whole_seconds}"
+                "{label}s"
             }
         }
     }
 }
 
-/// The dial's tick marks, as `(x1, y1, x2, y2)` in svg units.
-///
-/// These depend only on `TIMER_PERIOD_S` and `DIAL_R`, so they are computed
-/// once rather than re-derived — six trig calls apiece — on every frame.
+/// The dial's tick marks, one per second, as `(x1, y1, x2, y2)` in svg
+/// units. They depend only on constants, so they are computed once rather
+/// than on every frame.
 fn dial_ticks() -> &'static [(f64, f64, f64, f64)] {
     static TICKS: std::sync::OnceLock<Vec<(f64, f64, f64, f64)>> = std::sync::OnceLock::new();
     TICKS.get_or_init(|| {
-        (0..(60 / TIMER_PERIOD_S))
-            .map(|step| {
-                let angle = (step * TIMER_PERIOD_S) as f64 / 60.0 * std::f64::consts::TAU
+        (0..MAX_WAIT_S)
+            .map(|second| {
+                let angle = second as f64 / MAX_WAIT_S as f64 * std::f64::consts::TAU
                     - std::f64::consts::FRAC_PI_2;
                 let (sin, cos) = angle.sin_cos();
                 (
-                    50.0 + DIAL_R * 0.82 * cos,
-                    50.0 + DIAL_R * 0.82 * sin,
+                    50.0 + DIAL_R * 0.88 * cos,
+                    50.0 + DIAL_R * 0.88 * sin,
                     50.0 + DIAL_R * cos,
                     50.0 + DIAL_R * sin,
                 )
             })
             .collect()
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_wall_clock_stays_inside_one_minute() {
-        let wall = wall_now_ms();
-        assert!((0.0..60_000.0).contains(&wall), "got {wall}");
-    }
-
-    #[test]
-    fn the_offset_maps_the_monotonic_clock_onto_the_dial() {
-        // a sim built with this offset reads the same minute as the wall
-        let offset = wall_offset_ms();
-        let mapped = (crate::clock::now_ms() + offset).rem_euclid(60_000.0);
-        assert!(
-            (mapped - wall_now_ms()).abs() < 1_000.0,
-            "mapped {mapped} vs wall {}",
-            wall_now_ms(),
-        );
-    }
 }

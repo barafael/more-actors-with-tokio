@@ -1,0 +1,126 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- The code theme of marp-theme-rhea (github.com/barafael/marp-theme-rhea):
+     gaia's highlight.js Sunburst on a #333 block, with rhea's overrides —
+     grey comments, pale attributes, no underlined type names. Scopes are
+     mapped from Sublime's Rust grammar to the hljs classes Sunburst colours;
+     what Sunburst leaves plain (operators, literals, macros) stays plain. -->
+<plist version="1.0">
+<dict>
+    <key>name</key>
+    <string>Rhea</string>
+    <key>settings</key>
+    <array>
+        <dict>
+            <key>settings</key>
+            <dict>
+                <key>background</key>
+                <string>#333333</string>
+                <key>foreground</key>
+                <string>#f8f8f8</string>
+            </dict>
+        </dict>
+        <dict>
+            <key>name</key>
+            <string>hljs-comment (rhea)</string>
+            <key>scope</key>
+            <string>comment, punctuation.definition.comment</string>
+            <key>settings</key>
+            <dict>
+                <key>foreground</key>
+                <string>#6b6b6b</string>
+                <key>fontStyle</key>
+                <string>italic</string>
+            </dict>
+        </dict>
+        <dict>
+            <key>name</key>
+            <string>hljs-keyword, hljs-type</string>
+            <key>scope</key>
+            <string>keyword, storage, support.type, variable.language</string>
+            <key>settings</key>
+            <dict>
+                <key>foreground</key>
+                <string>#e28964</string>
+            </dict>
+        </dict>
+        <dict>
+            <key>name</key>
+            <string>plain in Sunburst</string>
+            <key>scope</key>
+            <string>keyword.operator, punctuation, constant.language, support.macro</string>
+            <key>settings</key>
+            <dict>
+                <key>foreground</key>
+                <string>#f8f8f8</string>
+            </dict>
+        </dict>
+        <dict>
+            <key>name</key>
+            <string>hljs-string</string>
+            <key>scope</key>
+            <string>string, punctuation.definition.string</string>
+            <key>settings</key>
+            <dict>
+                <key>foreground</key>
+                <string>#65b042</string>
+            </dict>
+        </dict>
+        <dict>
+            <key>name</key>
+            <string>hljs-subst</string>
+            <key>scope</key>
+            <string>constant.character.escape, constant.other.placeholder</string>
+            <key>settings</key>
+            <dict>
+                <key>foreground</key>
+                <string>#daefa3</string>
+            </dict>
+        </dict>
+        <dict>
+            <key>name</key>
+            <string>hljs-title</string>
+            <key>scope</key>
+            <string>entity.name</string>
+            <key>settings</key>
+            <dict>
+                <key>foreground</key>
+                <string>#89bdff</string>
+            </dict>
+        </dict>
+        <dict>
+            <key>name</key>
+            <string>hljs-number, hljs-symbol</string>
+            <key>scope</key>
+            <string>constant.numeric, storage.modifier.lifetime, entity.name.lifetime</string>
+            <key>settings</key>
+            <dict>
+                <key>foreground</key>
+                <string>#3387cc</string>
+            </dict>
+        </dict>
+        <dict>
+            <key>name</key>
+            <string>hljs-params</string>
+            <key>scope</key>
+            <string>variable.parameter</string>
+            <key>settings</key>
+            <dict>
+                <key>foreground</key>
+                <string>#3e87e3</string>
+            </dict>
+        </dict>
+        <dict>
+            <key>name</key>
+            <string>hljs-meta (rhea)</string>
+            <key>scope</key>
+            <string>meta.annotation, meta.attribute</string>
+            <key>settings</key>
+            <dict>
+                <key>foreground</key>
+                <string>#cccccc</string>
+            </dict>
+        </dict>
+    </array>
+</dict>
+</plist>

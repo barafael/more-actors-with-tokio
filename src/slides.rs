@@ -65,14 +65,14 @@ macro_rules! slide {
 // schedule.md's chapters: the hook (2 min), the prerequisites (10 min:
 // futures, combining them, spawning, channels), the pattern (12 min, the
 // blog post), its consequences for architecture (12 min), and the closing
-// (4 min: Kay, credit to Alice Ryhl, and a call to report problems with the
-// pattern on the blog repo). Then a divider for whatever is left over.
+// (4 min: Kay, ownership as responsibility, credit to Alice Ryhl, and a
+// call to report problems with the pattern on the blog repo). Then a
+// divider for whatever is left over.
 deck! {
     // the hook
     ("title", Title),
+    ("prelude", PreludeSlide),
     ("mutex", MutexGameSlide),
-    ("ownership", OwnershipSlide),
-    ("scattered-logic", ScatteredLogicSlide),
 
     ("prerequisites", section "Prerequisites"),
     // futures
@@ -122,6 +122,7 @@ deck! {
 
     ("closing", section "Closing"),
     ("original-oop", KaySlide),
+    ("ownership", OwnershipSlide),
     ("thanks", topic "Thanks, Alice Ryhl"),
     ("report-issues", topic "Found a problem with the pattern? Tell me"),
 
@@ -197,10 +198,25 @@ pub enum Command {
 #[component]
 pub fn Title() -> Element {
     rsx! {
-        div { class: "slide lead",
+        div { class: "slide lead title-slide",
             h1 { "More Actors with Tokio" }
             h3 { "Or: how not to " code { "Arc<Mutex<T>>" } }
             h4 { "(and " i { "why" } ")" }
+        }
+    }
+}
+
+/// The prelude: the chain of reasoning the talk stands on, each clause
+/// picking up the word the last one ended on, down to ownership.
+#[component]
+pub fn PreludeSlide() -> Element {
+    rsx! {
+        div { class: "slide lead",
+            div { class: "prelude",
+                p { span { class: "prelude-term", "Communication" } " implies " span { class: "prelude-term", "trust" } ";" }
+                p { span { class: "prelude-term", "trust" } " requires " span { class: "prelude-term", "responsibility" } ";" }
+                p { span { class: "prelude-term", "responsibility" } " means " strong { "ownership" } "." }
+            }
         }
     }
 }
@@ -211,15 +227,15 @@ pub fn Title() -> Element {
 pub fn MutexGameSlide() -> Element {
     rsx! {
         div { class: "slide",
-            h2 { code { "Arc<Mutex<T>>" }}
-            p { class: "dim", "Shared (Arc) Synchronized Mutability (Mutex)." }
+            h3 { code { "Arc<Mutex<Resource>>" }}
+            p { class: "dim", "Shared Ownership (Arc) with Synchronized Mutability (Mutex)." }
             MutexGame {}
         }
     }
 }
 
-/// "Responsibility is ownership", from the blog: what the lock was
-/// standing in for.
+/// "Responsibility is ownership", from the blog: back where the prelude
+/// ended, now that the pattern has shown it.
 #[component]
 pub fn OwnershipSlide() -> Element {
     rsx! {
@@ -237,38 +253,14 @@ pub fn OwnershipSlide() -> Element {
     }
 }
 
-/// What the `Arc<Mutex<T>>` answer looks like across a codebase.
-#[component]
-pub fn ScatteredLogicSlide() -> Element {
-    rsx! {
-        div { class: "slide",
-            h2 { "Everyone holds the lock" }
-            p { class: "dim", "Logic that belongs together is spread over every call site. And the state cannot react to anything: it changes only when someone locks it." }
-            Code { code: SCATTERED_CODE }
-        }
-    }
-}
-
-const SCATTERED_CODE: &str = r#"// api.rs
-let mut account = state.lock().await;
-account.balance -= amount;
-
-// interest.rs
-let mut account = state.lock().await;
-account.balance += account.balance / 100;
-
-// alerts.rs: who checks for a negative balance, and when?
-let account = state.lock().await;
-if account.balance < 0 { notify().await; }"#;
-
 /// CONCEPT.md §2: the first future in the deck, and the first thing that
 /// happens without anyone doing it.
 #[component]
 pub fn TimerGameSlide() -> Element {
     rsx! {
         div { class: "slide",
-            h2 { "A future that waits" }
-            p { class: "dim", "Yields the number of seconds it waited for the next multiple of ten." }
+            h2 { "Waiting for Time to Pass" }
+            p { class: "dim", "Sleeps for the seconds you give it, from 0 to 10, then yields them." }
             TimerGame {}
         }
     }
@@ -279,7 +271,7 @@ pub fn TimerGameSlide() -> Element {
 pub fn SelectGameSlide() -> Element {
     rsx! {
         div { class: "slide",
-            h2 { "The select! macro" }
+            h2 { "Waiting for Multiple Futures" }
             p { class: "dim", "Two futures, awaited together. The first to complete wins; the other is dropped mid-flight, never resumed." }
             SelectGame {}
         }
@@ -293,7 +285,7 @@ pub fn SpawnGameSlide() -> Element {
     rsx! {
         div { class: "slide",
             h2 { "Spawning the select" }
-            p { class: "dim", "One race from the select slide, moved into a task. tokio::spawn runs it on its own and hands back a JoinHandle, which resolves to whatever the select yielded." }
+            p { class: "dim", "The loop-select, moved into a task. tokio::spawn starts it once and it runs on its own, forever: the JoinHandle it hands back never resolves." }
             SpawnGame {}
         }
     }
@@ -340,7 +332,7 @@ pub fn SelectPitfallsSlide() -> Element {
 pub fn ButtonGameSlide() -> Element {
     rsx! {
         div { class: "slide",
-            h2 { "The button future" }
+            h2 { "Waiting for User Input" }
             p { class: "dim", "This is not an actor — just a future. Await it, then do real I/O: the future resolves with whichever button is pressed." }
             ButtonGame {}
         }
@@ -570,7 +562,7 @@ pub fn Recipe() -> Element {
     rsx! {
         div { class: "slide",
             h2 { "The actor recipe" }
-            div { class: "recipe",
+            div { class: "recipe with-code",
                 ul { class: "recipe-rules",
                     li { strong { "The actor is its data." } " No channels, no sockets as fields: the loop owns the runtime resources." }
                     li { strong { "The loop consumes and returns " } code { "Self" } strong { "." } " Inspect the final state, or run it again." }

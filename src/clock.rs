@@ -72,38 +72,6 @@ pub fn now_ms() -> f64 {
     }
 }
 
-/// Milliseconds into the current minute, from the wall clock.
-///
-/// The dial is read straight off the wall clock every frame rather than off
-/// the timer sim, whose clock only moves while a future is pending; the sim
-/// maps its own clock onto the same wall with [`wall_offset_ms`], so the two
-/// agree.
-pub fn wall_now_ms() -> f64 {
-    #[cfg(target_arch = "wasm32")]
-    {
-        // `Date.now()` without a js-sys dependency: the time origin plus the
-        // performance clock is the same wall clock.
-        with_performance(|performance| performance.time_origin() + performance.now())
-            .rem_euclid(60_000.0)
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|elapsed| elapsed.as_millis() as f64)
-            .unwrap_or_default()
-            .rem_euclid(60_000.0)
-    }
-}
-
-/// The offset that maps the monotonic sim clock onto the wall dial.
-///
-/// The browser sim and the sims' own arithmetic need this, and they need to
-/// agree, so it lives here rather than in either one's module.
-pub fn wall_offset_ms() -> f64 {
-    (wall_now_ms() - now_ms()).rem_euclid(60_000.0)
-}
-
 /// Run `read` against the browser's `Performance`, fetching it once.
 ///
 /// `window()` and `performance()` are process-constant but each crossing of
